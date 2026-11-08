@@ -34,12 +34,13 @@ Public API
 """
 
 import hashlib
+import hmac
 import json
 import os
 import socket
 import time
 from contextlib import asynccontextmanager
-from urllib.parse import quote
+from urllib.parse import parse_qs, quote, urlencode
 
 import httpx
 from fastapi import FastAPI, File, Form, Request, UploadFile
@@ -57,6 +58,10 @@ RATE_LIMIT_BURST_FACTOR = float(os.getenv("RATE_LIMIT_BURST_FACTOR", "2"))
 AUTH_CACHE_SECONDS = float(os.getenv("AUTH_CACHE_SECONDS", "30"))
 CORS_ORIGINS = [o.strip() for o in os.getenv("CORS_ORIGINS", "*").split(",")]
 GATEWAY_ID = os.getenv("GATEWAY_ID") or socket.gethostname()
+# Shared by all gateway instances: signs presigned download URLs.
+PRESIGN_SECRET = os.getenv("PRESIGN_SECRET", "dev-presign-secret-change-me")
+PRESIGN_MAX_SECONDS = 3600
+SIGNATURE_PARAMS = ("X-Expires", "X-KeyId", "X-Signature")
 
 OPEN_PATHS = {"/health", "/docs", "/openapi.json"}
 REQUEST_HEADERS = ("range", "if-none-match", "content-type", "x-chunking",
@@ -106,10 +111,40 @@ async def resolve_key(api_key: str) -> dict | None:
     raise RuntimeError(f"auth backend returned {r.status_code}")
 
 
+def presign_signature(method: str, path: str, version: str, expires: int,
+                      key_id: str) -> str:
+    message = f"{method}\n{path}\n{version}\n{expires}\n{key_id}"
+    return hmac.new(PRESIGN_SECRET.encode(), message.encode(),
+                    hashlib.sha256).hexdigest()
+
+
+def check_presigned(method: str, path: str, query: str) -> dict | None:
+    """Identity for a valid presigned URL (download only), else None.
+
+    Like an S3 presigned URL: anyone holding the link can download that one
+    object until it expires, without an API key. The HMAC prevents changing
+    the path, version or expiry."""
+    if method not in ("GET", "HEAD") or "/objects/" not in path:
+        return None
+    params = {k: v[0] for k, v in parse_qs(query).items()}
+    try:
+        expires = int(params["X-Expires"])
+        key_id, signature = params["X-KeyId"], params["X-Signature"]
+    except (KeyError, ValueError):
+        return None
+    if expires < time.time():
+        return None
+    expected = presign_signature("GET", quote(path, safe="/"),
+                                 params.get("version", ""), expires, key_id)
+    if not hmac.compare_digest(expected, signature):
+        return None
+    return {"key_id": key_id, "role": "readonly", "presigned": True}
+
+
 def required_role(method: str, path: str) -> str:
     if path.startswith("/admin"):
         return "admin"
-    if method in ("GET", "HEAD"):
+    if method in ("GET", "HEAD") or path == "/presign":
         return "readonly"
     return "readwrite"
 
@@ -143,13 +178,19 @@ class AuthMiddleware:
                 api_key = auth[7:].strip()
             client_ip = (scope.get("client") or ("?", 0))[0]
 
-            if not api_key:
+            query = scope.get("query_string", b"").decode()
+            if not api_key and "X-Signature=" in query:
+                ident = check_presigned(method, path, query)
+                if ident is None:
+                    return await reply(403, "Invalid or expired presigned URL")
+            elif not api_key:
                 return await reply(401, "Missing API key (X-API-Key header)",
                                    [(b"www-authenticate", b"Bearer")])
-            try:
-                ident = await resolve_key(api_key)
-            except (httpx.HTTPError, RuntimeError):
-                return await reply(503, "Authentication service unavailable")
+            else:
+                try:
+                    ident = await resolve_key(api_key)
+                except (httpx.HTTPError, RuntimeError):
+                    return await reply(503, "Authentication service unavailable")
             if ident is None:
                 allowed, _, retry, _ = failed_auth.take(f"ip:{client_ip}")
                 if not allowed:
@@ -227,7 +268,9 @@ async def forward(request: Request, method: str, path: str, *,
                   stream_response: bool = False, admin: bool = False,
                   params=None):
     headers = _pass_headers(request, admin)
-    params = dict(request.query_params) if params is None else params
+    if params is None:
+        params = {k: v for k, v in request.query_params.items()
+                  if k not in SIGNATURE_PARAMS and k != "download"}
     kwargs = {"headers": headers, "params": params}
     if json_body is not None:
         kwargs["json"] = json_body
@@ -244,8 +287,12 @@ async def forward(request: Request, method: str, path: str, *,
         return JSONResponse({"detail": f"Coordinator unreachable: {exc}"}, 502)
 
     if stream_response and r.status_code in (200, 206):
+        out_headers = _response_headers(r)
+        if request.query_params.get("download"):
+            name = path.rsplit("/", 1)[-1] or "download"
+            out_headers["Content-Disposition"] = f'attachment; filename="{name}"'
         return StreamingResponse(r.aiter_raw(), status_code=r.status_code,
-                                 headers=_response_headers(r),
+                                 headers=out_headers,
                                  background=BackgroundTask(r.aclose))
     body = await r.aread()
     await r.aclose()
@@ -397,7 +444,47 @@ async def put_tags(bucket: str, key: str, request: Request):
 
 @app.get("/search")
 async def search(request: Request):
+    """Structured search in PostgreSQL (exact filters)."""
     return await forward(request, "GET", "/v1/search")
+
+
+@app.get("/search/text")
+async def text_search(request: Request):
+    """Full-text search in Elasticsearch (fuzzy, facets, highlighting)."""
+    return await forward(request, "GET", "/v1/search/text")
+
+
+@app.get("/search/index")
+async def search_index_status(request: Request):
+    return await forward(request, "GET", "/v1/search/index")
+
+
+@app.post("/presign")
+async def presign(request: Request):
+    """Create a time-limited download URL for one object (no key needed
+    to use it). Body: {"bucket", "key", "version"?, "expires_in"?}"""
+    body = await _json(request) or {}
+    bucket, key = body.get("bucket"), body.get("key")
+    if not bucket or not key:
+        return JSONResponse({"detail": "bucket and key are required"}, 400)
+    try:
+        ttl = int(body.get("expires_in", 300))
+    except (TypeError, ValueError):
+        return JSONResponse({"detail": "expires_in must be an integer"}, 400)
+    ttl = max(1, min(ttl, PRESIGN_MAX_SECONDS))
+    ident = request.scope.get("gateway.identity") or {}
+    version = str(body.get("version") or "")
+    expires = int(time.time()) + ttl
+    path = f"/buckets/{_q(bucket)}/objects/{_q(key)}"
+    params = {"X-Expires": expires, "X-KeyId": ident.get("key_id", ""),
+              "X-Signature": presign_signature("GET", path, version, expires,
+                                               ident.get("key_id", ""))}
+    if version:
+        params["version"] = version
+    if body.get("download"):
+        params["download"] = "1"
+    return {"url": f"{path}?{urlencode(params)}", "expires_at": expires,
+            "expires_in": ttl}
 
 
 # ---- multipart uploads --------------------------------------------------------
@@ -489,7 +576,7 @@ async def revoke_key(key_id: str, request: Request):
 async def admin_action(action: str, request: Request):
     paths = {"repair": "/v1/admin/repair", "scrub": "/v1/admin/scrub",
              "rebalance": "/v1/admin/rebalance", "gc": "/v1/admin/gc",
-             "nodes": "/v1/admin/nodes"}
+             "nodes": "/v1/admin/nodes", "reindex": "/v1/admin/reindex"}
     if action not in paths:
         return JSONResponse({"detail": "Unknown admin action"}, 404)
     body = await _json(request) if action == "nodes" else None

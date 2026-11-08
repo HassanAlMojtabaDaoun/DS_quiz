@@ -27,7 +27,7 @@ from fastapi import APIRouter, Header, HTTPException, Request, Response
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from coordinator import cluster, config, objects
+from coordinator import cluster, config, objects, search_index
 from coordinator.db import connect_db
 from coordinator.ranges import RangeNotSatisfiable, parse_range
 from coordinator.redundancy import policy_key
@@ -249,6 +249,7 @@ def put_tags(bucket: str, key: str, body: TagsIn, version: int | None = None):
     with connect_db() as conn:
         conn.execute("UPDATE object_versions SET tags = %s::jsonb "
                      "WHERE object_id = %s", (json.dumps(tags), obj["object_id"]))
+    search_index.mark_dirty(bucket, key)
     return {"bucket": bucket, "key": key, "version": obj["version"],
             "tags": tags}
 
@@ -323,6 +324,59 @@ def search(bucket: str | None = None, prefix: str | None = None,
     return {"total": rows[0]["total"] if rows else 0,
             "count": len(rows), "offset": offset,
             "results": [objects.describe_version(r) for r in rows]}
+
+
+@router.get("/v1/search/text")
+async def text_search(q: str | None = None, bucket: str | None = None,
+                      prefix: str | None = None, min_size: int | None = None,
+                      max_size: int | None = None,
+                      created_after: str | None = None,
+                      created_before: str | None = None,
+                      tags: str | None = None, content_type: str | None = None,
+                      sort: str = "relevance", order: str = "desc",
+                      limit: int = 50, offset: int = 0):
+    """Full-text search through Elasticsearch (fuzzy key/tag matching,
+    facets, highlighting). Falls back with 503 if ES is unavailable."""
+    if not search_index.STATE["enabled"]:
+        raise HTTPException(status_code=503,
+                            detail="Elasticsearch is not configured (ES_URL)")
+    if not search_index.STATE["ready"]:
+        raise HTTPException(status_code=503,
+                            detail="Elasticsearch index not ready yet")
+    for name, value in (("created_after", created_after),
+                        ("created_before", created_before)):
+        _parse_dt(value, name)
+    if sort not in ("relevance", "size", "created_at", "key") or \
+            order not in ("asc", "desc"):
+        raise HTTPException(status_code=400, detail="Invalid sort/order")
+    try:
+        return await search_index.search(
+            q=q, bucket=bucket, prefix=prefix, min_size=min_size,
+            max_size=max_size, created_after=created_after,
+            created_before=created_before, tags=objects.parse_tags(tags),
+            content_type=content_type, sort=sort, order=order, limit=limit,
+            offset=offset)
+    except Exception as exc:                      # ES down, bad response...
+        raise HTTPException(status_code=503,
+                            detail=f"Elasticsearch error: {exc}")
+
+
+@router.get("/v1/search/index")
+def search_index_status():
+    return search_index.status()
+
+
+@router.post("/v1/admin/reindex")
+async def reindex(x_cluster_token: str | None = Header(default=None)):
+    if x_cluster_token != config.CLUSTER_TOKEN:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    if not search_index.STATE["enabled"]:
+        raise HTTPException(status_code=503,
+                            detail="Elasticsearch is not configured (ES_URL)")
+    try:
+        return await search_index.reindex_all()
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"Reindex failed: {exc}")
 
 
 # ---------------------------------------------------------------------------
@@ -471,6 +525,7 @@ async def complete_upload(upload_id: str, body: CompleteIn | None = None):
             tags=upload["tags"] or {})
         conn.execute("DELETE FROM multipart_uploads WHERE upload_id = %s",
                      (upload["upload_id"],))
+    search_index.mark_dirty(upload["bucket"], upload["object_key"])
     await objects.collect_garbage(garbage)
     return {**objects.describe_version(row), "parts": len(chosen),
             "chunk_count": len(hashes)}

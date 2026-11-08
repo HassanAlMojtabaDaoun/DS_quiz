@@ -192,6 +192,8 @@ services:
       # Development bootstrap admin key (change it, or remove it once you
       # have created your own admin key through /admin/api-keys).
       ADMIN_API_KEY: ${ADMIN_API_KEY:-dev-admin-key-change-me}
+      # Search index over the metadata (leave empty to disable).
+      ES_URL: http://elasticsearch:9200
     depends_on:
       postgres:
         condition: service_healthy
@@ -217,8 +219,37 @@ services:
       RATE_LIMIT_RPS: "20"
       RATE_LIMIT_BURST_FACTOR: "2"
       CORS_ORIGINS: "*"
+      PRESIGN_SECRET: ${PRESIGN_SECRET:-dev-presign-secret-change-me}
     depends_on:
       - storage-coordinator
+    restart: unless-stopped
+
+  # Full-text search over object metadata (a derived index; PostgreSQL
+  # remains the source of truth).
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.15.3
+    environment:
+      discovery.type: single-node
+      xpack.security.enabled: "false"
+      ES_JAVA_OPTS: "-Xms512m -Xmx512m"
+    ports:
+      - "9200:9200"
+    volumes:
+      - elasticsearch-data:/usr/share/elasticsearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s http://localhost:9200/_cluster/health | grep -q status"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+    restart: unless-stopped
+
+  # React web UI (nginx serves the prebuilt app and proxies /api to the gateway)
+  ui:
+    build: ./ui
+    ports:
+      - "3001:80"
+    depends_on:
+      - gateway
     restart: unless-stopped
 
 volumes:
@@ -233,3 +264,4 @@ volumes:
   storage-node-4-data:
   storage-node-5-data:
   storage-node-6-data:
+  elasticsearch-data:

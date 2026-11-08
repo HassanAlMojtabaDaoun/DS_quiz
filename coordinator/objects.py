@@ -21,7 +21,7 @@ from uuid import uuid4
 import httpx
 from fastapi import HTTPException
 
-from coordinator import cluster, config
+from coordinator import cluster, config, search_index
 from coordinator.chunking import StreamChunker
 from coordinator.db import connect_db
 from coordinator.ranges import chunks_for_range
@@ -235,6 +235,7 @@ async def put_object(bucket: str, key: str, source: AsyncIterator[bytes], *,
             etag=state["sha256"], hashes=state["hashes"], chunking=chunking,
             policy=state["policy"], content_type=content_type,
             tags=tags or {})
+    search_index.mark_dirty(bucket, key)
     return {**describe_version(row),
             "redundancy": describe_bucket(policy),
             "chunk_count": len(state["hashes"]),
@@ -393,6 +394,8 @@ async def delete_versions(where_sql: str, params: tuple) -> dict:
             params).fetchall()
         for row in rows:
             garbage += release_chunks(conn, row["chunk_hashes"], row["policy"])
+    for row in rows:
+        search_index.mark_dirty(row["bucket"], row["object_key"])
     removed = await collect_garbage(garbage)
     return {"versions_deleted": len(rows),
             "deleted": [{"bucket": r["bucket"], "key": r["object_key"],

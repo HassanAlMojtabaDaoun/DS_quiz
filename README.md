@@ -25,6 +25,8 @@ their data is rebuilt automatically; a scrubber detects bit rot.
 | `coordinator/main.py` | Core HTTP API (nodes, buckets, repair, admin) |
 | `gateway/main.py` | **Public API gateway**: API-key auth, roles, rate limiting, streaming proxy |
 | `gateway/ratelimit.py` | Token-bucket rate limiter |
+| `coordinator/search_index.py` | Elasticsearch index over metadata (async sync, full-text query, facets) |
+| `ui/` | React web UI (source in `ui/src`, prebuilt bundle in `ui/dist`, served by nginx) |
 | `docs/postman_collection.json` | Postman collection (36 requests with tests) |
 | `client/main.py` | Command-line client |
 | `scripts/` | Workload generator and experiments |
@@ -70,7 +72,9 @@ Every request except `/health` needs `X-API-Key: <key>` (or
 | `POST /buckets/{b}/uploads` `{"key"}` -> `PUT /uploads/{id}/parts/{n}` -> `POST /uploads/{id}/complete` (`DELETE` aborts) | multipart upload |
 | `GET /cluster/status`, `/cluster/nodes`, `/cluster/repair`, `/stats` | cluster state |
 | `POST /admin/api-keys` `{"name","role":"admin\|readwrite\|readonly","rate_limit_rps"}`, `GET /admin/api-keys`, `DELETE /admin/api-keys/{id}` | key management |
-| `POST /admin/repair\|scrub\|rebalance\|gc` | operations |
+| `POST /presign` `{"bucket","key","version"?,"expires_in"?,"download"?}` | time-limited download URL (HMAC-signed, no key needed to use it) |
+| `GET /search/text?q=&bucket=&prefix=&min_size=&max_size=&created_after=&created_before=&tags=&sort=relevance` | Elasticsearch full-text search with facets |
+| `POST /admin/repair\|scrub\|rebalance\|gc\|reindex` | operations |
 
 Rate limit: token bucket per key (`RATE_LIMIT_RPS`, default 20/s, burst
 2x, or the key's own `rate_limit_rps`). Exceeding it returns **429** with
@@ -83,7 +87,29 @@ python -m pytest -v tests/integration      # 19 end-to-end tests via the gateway
 ```
 Postman: *Import* `docs/postman_collection.json`, then *Run collection*.
 
-## 4. Objects, buckets and redundancy policies (CLI, internal API)
+## 4. Web UI and Elasticsearch search (Task 6)
+Open **http://localhost:3001** and sign in with an API key
+(`dev-admin-key-change-me`).
+
+| Page | What it shows / does |
+|---|---|
+| Cluster | node health (heartbeats), free space, blobs per node (chunk distribution), degraded/unavailable objects, repair progress and traffic; admin buttons for scrub / repair / rebalance |
+| Browse | buckets (create with replication or EC k+m), folders, objects, download (presigned URL), delete, details: versions, tags, and the node of every replica / shard |
+| Upload | drag and drop, progress bars; files >= 64 MiB use multipart upload (16 MiB parts) |
+| Search | Elasticsearch full-text search (fuzzy key/tag matching, highlighting, facets) or exact PostgreSQL search |
+| Settings | API keys (create / revoke), search-index status and rebuild |
+
+Elasticsearch is a **derived index**: PostgreSQL remains the source of truth,
+writes only mark keys as changed and a background task updates the index
+in bulk (eventual consistency). `POST /admin/reindex` rebuilds it.
+
+Rebuild the UI after changing `ui/src` (needs Node.js):
+```powershell
+cd ui; npm install; npm run build; cd ..
+docker compose up -d --build ui
+```
+
+## 5. Objects, buckets and redundancy policies (CLI, internal API)
 ```powershell
 python -m client.main bucket-create photos  --redundancy replication
 python -m client.main bucket-create archive --redundancy ec --k 4 --m 2
@@ -95,7 +121,7 @@ python -m client.main bucket-stats archive    # storage overhead
 python -m client.main status                  # nodes, blobs per node, degraded objects
 ```
 
-## 5. Placement and chunking experiments (Task 3)
+## 6. Placement and chunking experiments (Task 3)
 ```powershell
 python scripts/placement_experiment.py
 python scripts/gen_workloads.py small --out datasets/small
@@ -108,7 +134,7 @@ Invoke-RestMethod -Method Post -Uri http://localhost:8000/v1/admin/nodes -Header
 Invoke-RestMethod -Method Post -Uri http://localhost:8000/v1/admin/rebalance -Headers $h
 ```
 
-## 6. Failures, repair and scrubbing (Task 4)
+## 7. Failures, repair and scrubbing (Task 4)
 ```powershell
 docker compose stop storage-node-4              # node failure
 python -m client.main nodes                     # node4 -> failed after ~15 s
@@ -138,7 +164,7 @@ python scripts/redundancy_benchmark.py --small datasets/small --large datasets/l
 | `VNODES` | 128 | virtual nodes per storage node |
 | `ALLOW_FAULT_INJECTION` (nodes) | true | enables the bit-rot demo endpoint (disable in production) |
 
-## 7. Kubernetes (Docker Desktop)
+## 8. Kubernetes (Docker Desktop)
 ```powershell
 kubectl config use-context docker-desktop
 kubectl get nodes

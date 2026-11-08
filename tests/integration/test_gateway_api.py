@@ -305,3 +305,41 @@ def test_delete_bucket_requires_empty(admin):
     assert admin.delete(f"/buckets/{name}",
                         params={"force": "true"}).status_code == 200
     assert admin.get(f"/buckets/{name}").status_code == 404
+
+
+# ---- presigned URLs and full-text search (Task 6) -------------------------------
+
+def test_presigned_download(admin, bucket):
+    admin.put(f"/buckets/{bucket}/objects/share/me.txt", content=b"shared!")
+    r = admin.post("/presign", json={"bucket": bucket, "key": "share/me.txt",
+                                     "expires_in": 60, "download": True})
+    assert r.status_code == 200, r.text
+    url = r.json()["url"]
+    got = httpx.get(URL + url)                       # no API key at all
+    assert got.status_code == 200 and got.content == b"shared!"
+    assert "attachment" in got.headers.get("content-disposition", "")
+    tampered = url.replace("share/me.txt", "share/other.txt")
+    assert httpx.get(URL + tampered).status_code == 403
+    expired = r.json()["url"].replace(f"X-Expires={r.json()['expires_at']}",
+                                      "X-Expires=1000")
+    assert httpx.get(URL + expired).status_code == 403
+
+
+def test_full_text_search(admin, bucket):
+    status = admin.get("/search/index").json()
+    if not (status["enabled"] and status["ready"]):
+        pytest.skip("Elasticsearch not enabled/ready")
+    admin.put(f"/buckets/{bucket}/objects/fts/holiday-beach-sunset.jpg",
+              content=b"jpeg", headers={"X-Tags": "trip=greece"})
+    deadline = time.time() + 30                      # index is eventually consistent
+    found = []
+    while time.time() < deadline:
+        r = admin.get("/search/text", params={"q": "beach", "bucket": bucket})
+        assert r.status_code == 200, r.text
+        found = [o["key"] for o in r.json()["results"]]
+        if "fts/holiday-beach-sunset.jpg" in found:
+            break
+        time.sleep(1)
+    assert "fts/holiday-beach-sunset.jpg" in found
+    r = admin.get("/search/text", params={"tags": "trip=greece", "bucket": bucket})
+    assert [o["key"] for o in r.json()["results"]] == ["fts/holiday-beach-sunset.jpg"]

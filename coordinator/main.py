@@ -23,7 +23,8 @@ from fastapi import FastAPI, File, Form, Header, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from coordinator import api_keys, api_objects, cluster, config, erasure, objects, repair
+from coordinator import (api_keys, api_objects, cluster, config, erasure,
+                         objects, repair, search_index)
 from coordinator.db import connect_db, init_db
 from coordinator.objects import describe_bucket, ensure_bucket
 from coordinator.redundancy import policy_key
@@ -41,15 +42,18 @@ async def lifespan(app: FastAPI):
     init_db()
     cluster.load_membership()
     ensure_bucket("default")
-    task = asyncio.create_task(repair.repair_loop())
+    tasks = [asyncio.create_task(repair.repair_loop()),
+             asyncio.create_task(search_index.sync_loop())]
     try:
         yield
     finally:
-        task.cancel()
-        try:
-            await task
-        except asyncio.CancelledError:
-            pass
+        for task in tasks:
+            task.cancel()
+        for task in tasks:
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
 
 
 app = FastAPI(title="Distributed Content-Addressed Storage",
