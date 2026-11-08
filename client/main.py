@@ -9,7 +9,8 @@ import httpx
 DEFAULT_URL = "http://localhost:8000"
 
 
-def upload(base_url: str, filename: str):
+def upload(base_url: str, filename: str, bucket: str = "default",
+           key: str | None = None, chunking: str = "fixed"):
     path = Path(filename)
 
     if not path.is_file():
@@ -25,6 +26,8 @@ def upload(base_url: str, filename: str):
                     "application/octet-stream",
                 )
             },
+            data={"bucket": bucket, "key": key or path.name,
+                  "chunking": chunking},
             timeout=3600,
         )
 
@@ -69,6 +72,10 @@ def main():
 
     upload_parser = subparsers.add_parser("upload")
     upload_parser.add_argument("file")
+    upload_parser.add_argument("--bucket", default="default")
+    upload_parser.add_argument("--key")
+    upload_parser.add_argument("--chunking", choices=["fixed", "cdc"],
+                               default="fixed")
 
     download_parser = subparsers.add_parser("download")
     download_parser.add_argument("file_id")
@@ -81,13 +88,15 @@ def main():
     info_parser.add_argument("file_id")
 
     subparsers.add_parser("nodes")
+    subparsers.add_parser("ring")
+    subparsers.add_parser("stats")
 
     args = parser.parse_args()
     base_url = args.url.rstrip("/")
 
     try:
         if args.command == "upload":
-            upload(base_url, args.file)
+            upload(base_url, args.file, args.bucket, args.key, args.chunking)
         elif args.command == "download":
             download(base_url, args.file_id, args.output)
         elif args.command == "delete":
@@ -96,6 +105,10 @@ def main():
             print(json.dumps(response.json(), indent=2))
         elif args.command == "info":
             response = httpx.get(f"{base_url}/v1/files/{args.file_id}", timeout=10)
+            response.raise_for_status()
+            print(json.dumps(response.json(), indent=2))
+        elif args.command in ("ring", "stats"):
+            response = httpx.get(f"{base_url}/v1/{args.command}", timeout=30)
             response.raise_for_status()
             print(json.dumps(response.json(), indent=2))
         elif args.command == "nodes":

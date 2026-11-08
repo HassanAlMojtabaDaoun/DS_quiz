@@ -73,6 +73,7 @@ services:
     command: ["uvicorn", "storage_node.main:app", "--host", "0.0.0.0", "--port", "8000"]
     environment:
       NODE_ID: node1
+      NODE_URL: http://storage-node-1:8000
       STORAGE_DIR: /data
       CLUSTER_TOKEN: ${CLUSTER_TOKEN:-dev-cluster-token-change-me}
       METADATA_URL: http://storage-coordinator:8000
@@ -86,6 +87,7 @@ services:
     command: ["uvicorn", "storage_node.main:app", "--host", "0.0.0.0", "--port", "8000"]
     environment:
       NODE_ID: node2
+      NODE_URL: http://storage-node-2:8000
       STORAGE_DIR: /data
       CLUSTER_TOKEN: ${CLUSTER_TOKEN:-dev-cluster-token-change-me}
       METADATA_URL: http://storage-coordinator:8000
@@ -99,6 +101,7 @@ services:
     command: ["uvicorn", "storage_node.main:app", "--host", "0.0.0.0", "--port", "8000"]
     environment:
       NODE_ID: node3
+      NODE_URL: http://storage-node-3:8000
       STORAGE_DIR: /data
       CLUSTER_TOKEN: ${CLUSTER_TOKEN:-dev-cluster-token-change-me}
       METADATA_URL: http://storage-coordinator:8000
@@ -112,12 +115,30 @@ services:
     command: ["uvicorn", "storage_node.main:app", "--host", "0.0.0.0", "--port", "8000"]
     environment:
       NODE_ID: node4
+      NODE_URL: http://storage-node-4:8000
       STORAGE_DIR: /data
       CLUSTER_TOKEN: ${CLUSTER_TOKEN:-dev-cluster-token-change-me}
       METADATA_URL: http://storage-coordinator:8000
       HEARTBEAT_INTERVAL: "5"
     volumes:
       - storage-node-4-data:/data
+    restart: unless-stopped
+
+  # Extra node for the placement experiment. Not started by default:
+  #   docker compose --profile scale up -d storage-node-5
+  storage-node-5:
+    build: .
+    profiles: ["scale"]
+    command: ["uvicorn", "storage_node.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    environment:
+      NODE_ID: node5
+      NODE_URL: http://storage-node-5:8000
+      STORAGE_DIR: /data
+      CLUSTER_TOKEN: ${CLUSTER_TOKEN:-dev-cluster-token-change-me}
+      METADATA_URL: http://storage-coordinator:8000
+      HEARTBEAT_INTERVAL: "5"
+    volumes:
+      - storage-node-5-data:/data
     restart: unless-stopped
 
   storage-coordinator:
@@ -130,6 +151,8 @@ services:
       CLUSTER_TOKEN: ${CLUSTER_TOKEN:-dev-cluster-token-change-me}
       NODE_URLS: node1=http://storage-node-1:8000,node2=http://storage-node-2:8000,node3=http://storage-node-3:8000,node4=http://storage-node-4:8000
       HEARTBEAT_TIMEOUT: "15"
+      VNODES: "128"
+      DEFAULT_CHUNKING: fixed
       CHUNK_SIZE: "4194304"
       REPLICATION_FACTOR: "3"
       MAX_FILE_SIZE: "1073741824"
@@ -156,3 +179,4 @@ volumes:
   storage-node-2-data:
   storage-node-3-data:
   storage-node-4-data:
+  storage-node-5-data:

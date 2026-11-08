@@ -1,0 +1,62 @@
+[
+  {
+    "dataset": "datasets\\small",
+    "method": "fixed",
+    "files": 5000,
+    "logical_MiB": 125.97,
+    "chunks": 5000,
+    "unique_chunks": 4481,
+    "unique_MiB": 113.16,
+    "dedup_ratio": 1.113,
+    "space_saved_pct": 10.17,
+    "avg_chunk_KiB": 25.8,
+    "min_chunk_KiB": 1.0,
+    "max_chunk_KiB": 50.0,
+    "throughput_MiB_s": 0.7
+  },
+  {
+    "dataset": "datasets\\small",
+    "method": "cdc",
+    "files": 5000,
+    "logical_MiB": 125.97,
+    "chunks": 5000,
+    "unique_chunks": 4481,
+    "unique_MiB": 113.16,
+    "dedup_ratio": 1.113,
+    "space_saved_pct": 10.17,
+    "avg_chunk_KiB": 25.8,
+    "min_chunk_KiB": 1.0,
+    "max_chunk_KiB": 50.0,
+    "throughput_MiB_s": 7.0
+  },
+  {
+    "dataset": "datasets\\large",
+    "method": "fixed",
+    "files": 10,
+    "logical_MiB": 1758.12,
+    "chunks": 445,
+    "unique_chunks": 429,
+    "unique_MiB": 1694.12,
+    "dedup_ratio": 1.038,
+    "space_saved_pct": 3.64,
+    "avg_chunk_KiB": 4045.6,
+    "min_chunk_KiB": 28.4,
+    "max_chunk_KiB": 4096.0,
+    "throughput_MiB_s": 528.7
+  },
+  {
+    "dataset": "datasets\\large",
+    "method": "cdc",
+    "files": 10,
+    "logical_MiB": 1758.12,
+    "chunks": 1534,
+    "unique_chunks": 860,
+    "unique_MiB": 1002.66,
+    "dedup_ratio": 1.753,
+    "space_saved_pct": 42.97,
+    "avg_chunk_KiB": 1173.6,
+    "min_chunk_KiB": 174.1,
+    "max_chunk_KiB": 2843.6,
+    "throughput_MiB_s": 6.1
+  }
+]

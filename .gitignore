@@ -6,7 +6,7 @@ __pycache__/
 
 # Local data, datasets and benchmark outputs that are regenerated
 data/
-datasets/generated/
+datasets/
 *.log
 
 # Secrets

@@ -23,6 +23,9 @@ METADATA_URL = os.getenv(
 ).rstrip("/")
 
 HEARTBEAT_INTERVAL = int(os.getenv("HEARTBEAT_INTERVAL", "5"))
+# Address other services use to reach this node (sent with each heartbeat,
+# so a new node can be added to the ring without editing configuration).
+NODE_URL = os.getenv("NODE_URL", "").rstrip("/") or None
 
 
 def collect_node_stats():
@@ -37,6 +40,7 @@ def collect_node_stats():
 
     return {
         "node_id": NODE_ID,
+        "url": NODE_URL,
         "free_bytes": disk.free,
         "total_bytes": disk.total,
         "chunk_count": len(chunks),
