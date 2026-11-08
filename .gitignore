@@ -17,3 +17,8 @@ datasets/
 .idea/
 Thumbs.db
 .DS_Store
+
+# Downloaded test files
+out.*
+check.*
+*.img

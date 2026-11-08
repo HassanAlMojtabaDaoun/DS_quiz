@@ -2,58 +2,58 @@
   "add_node5": {
     "change": "4 -> 5 nodes",
     "chunks": 100000,
-    "consistent_primary_moved_pct": 19.99,
-    "modulo_primary_moved_pct": 79.73,
-    "consistent_copies_moved_pct": 19.78,
-    "consistent_chunks_touched_pct": 59.34,
-    "modulo_copies_moved_pct": 39.89,
+    "consistent_primary_moved_pct": 20.24,
+    "modulo_primary_moved_pct": 79.86,
+    "consistent_copies_moved_pct": 19.85,
+    "consistent_chunks_touched_pct": 59.56,
+    "modulo_copies_moved_pct": 39.87,
     "theory_pct": 20.0
   },
   "remove_node4": {
     "change": "4 -> 3 nodes",
     "chunks": 100000,
-    "consistent_primary_moved_pct": 22.47,
-    "modulo_primary_moved_pct": 74.91,
-    "consistent_copies_moved_pct": 21.48,
-    "consistent_chunks_touched_pct": 64.43,
+    "consistent_primary_moved_pct": 22.59,
+    "modulo_primary_moved_pct": 74.89,
+    "consistent_copies_moved_pct": 21.47,
+    "consistent_chunks_touched_pct": 64.42,
     "modulo_copies_moved_pct": 25.02,
     "theory_pct": 25.0
   },
   "grow_4_to_8": {
     "change": "4 -> 8 nodes",
     "chunks": 100000,
-    "consistent_primary_moved_pct": 47.39,
-    "modulo_primary_moved_pct": 49.74,
-    "consistent_copies_moved_pct": 49.89,
-    "consistent_chunks_touched_pct": 94.06,
-    "modulo_copies_moved_pct": 49.89,
+    "consistent_primary_moved_pct": 47.68,
+    "modulo_primary_moved_pct": 49.98,
+    "consistent_copies_moved_pct": 49.94,
+    "consistent_chunks_touched_pct": 94.14,
+    "modulo_copies_moved_pct": 49.98,
     "theory_pct": 50.0
   },
   "load_balance_vs_vnodes": [
     {
       "vnodes": 1,
       "max_over_mean": 1.237,
-      "min_over_mean": 0.741
+      "min_over_mean": 0.734
     },
     {
       "vnodes": 8,
-      "max_over_mean": 1.244,
+      "max_over_mean": 1.241,
       "min_over_mean": 0.695
     },
     {
       "vnodes": 32,
       "max_over_mean": 1.084,
-      "min_over_mean": 0.904
+      "min_over_mean": 0.914
     },
     {
       "vnodes": 128,
-      "max_over_mean": 1.066,
-      "min_over_mean": 0.855
+      "max_over_mean": 1.061,
+      "min_over_mean": 0.854
     },
     {
       "vnodes": 512,
-      "max_over_mean": 1.027,
-      "min_over_mean": 0.981
+      "max_over_mean": 1.024,
+      "min_over_mean": 0.979
     }
   ]
 }

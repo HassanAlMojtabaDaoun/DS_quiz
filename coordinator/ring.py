@@ -88,7 +88,6 @@ class ConsistentHashRing:
         """Fraction of the ring (primary ownership) held by each node."""
         space = 2 ** 64
         share = {node: 0 for node in self._nodes}
-        total = len(self._positions)
         for i, pos in enumerate(self._positions):
             prev = self._positions[i - 1] if i else self._positions[-1] - space
             share[self._owners[i]] += pos - prev

@@ -110,3 +110,55 @@ def iter_chunks(stream: BinaryIO, method: str, chunk_size: int) -> Iterator[byte
     if method == "cdc":
         return fastcdc_chunks(stream)
     raise ValueError(f"Unknown chunking method: {method}")
+
+
+class StreamChunker:
+    """Incremental chunker for streamed uploads.
+
+    feed() takes the next piece of the request body (any size) and returns
+    the chunks that are complete; finish() returns the rest. Memory use is
+    bounded by one maximum-size chunk plus the incoming piece, so a 1 GB
+    upload never has to be held in memory or on the coordinator's disk.
+    The boundaries are identical to fixed_chunks() / fastcdc_chunks().
+    """
+
+    def __init__(self, method: str, chunk_size: int,
+                 min_size: int = CDC_MIN_SIZE, avg_size: int = CDC_AVG_SIZE,
+                 max_size: int = CDC_MAX_SIZE):
+        if method not in ("fixed", "cdc"):
+            raise ValueError(f"Unknown chunking method: {method}")
+        self.method = method
+        self.chunk_size = chunk_size
+        self.min_size, self.avg_size, self.max_size = min_size, avg_size, max_size
+        bits = avg_size.bit_length() - 1
+        self.mask_s = _high_mask(bits + 2)
+        self.mask_l = _high_mask(bits - 2)
+        self.buf = bytearray()
+
+    def _cut(self) -> int:
+        if self.method == "fixed":
+            return min(self.chunk_size, len(self.buf))
+        return _cut_point(self.buf, self.min_size, self.avg_size,
+                          self.max_size, self.mask_s, self.mask_l)
+
+    def _window(self) -> int:
+        return self.chunk_size if self.method == "fixed" else self.max_size
+
+    def feed(self, data: bytes) -> list[bytes]:
+        self.buf += data
+        out = []
+        # Only cut when a full search window is buffered, so boundaries do
+        # not depend on how the network split the body.
+        while len(self.buf) >= self._window():
+            cut = self._cut()
+            out.append(bytes(self.buf[:cut]))
+            del self.buf[:cut]
+        return out
+
+    def finish(self) -> list[bytes]:
+        out = []
+        while self.buf:
+            cut = self._cut()
+            out.append(bytes(self.buf[:cut]))
+            del self.buf[:cut]
+        return out

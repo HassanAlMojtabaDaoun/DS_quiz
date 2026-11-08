@@ -78,6 +78,8 @@ services:
       CLUSTER_TOKEN: ${CLUSTER_TOKEN:-dev-cluster-token-change-me}
       METADATA_URL: http://storage-coordinator:8000
       HEARTBEAT_INTERVAL: "5"
+      SCRUB_INTERVAL: "300"
+      ALLOW_FAULT_INJECTION: "true"
     volumes:
       - storage-node-1-data:/data
     restart: unless-stopped
@@ -92,6 +94,8 @@ services:
       CLUSTER_TOKEN: ${CLUSTER_TOKEN:-dev-cluster-token-change-me}
       METADATA_URL: http://storage-coordinator:8000
       HEARTBEAT_INTERVAL: "5"
+      SCRUB_INTERVAL: "300"
+      ALLOW_FAULT_INJECTION: "true"
     volumes:
       - storage-node-2-data:/data
     restart: unless-stopped
@@ -106,6 +110,8 @@ services:
       CLUSTER_TOKEN: ${CLUSTER_TOKEN:-dev-cluster-token-change-me}
       METADATA_URL: http://storage-coordinator:8000
       HEARTBEAT_INTERVAL: "5"
+      SCRUB_INTERVAL: "300"
+      ALLOW_FAULT_INJECTION: "true"
     volumes:
       - storage-node-3-data:/data
     restart: unless-stopped
@@ -120,12 +126,14 @@ services:
       CLUSTER_TOKEN: ${CLUSTER_TOKEN:-dev-cluster-token-change-me}
       METADATA_URL: http://storage-coordinator:8000
       HEARTBEAT_INTERVAL: "5"
+      SCRUB_INTERVAL: "300"
+      ALLOW_FAULT_INJECTION: "true"
     volumes:
       - storage-node-4-data:/data
     restart: unless-stopped
 
-  # Extra node for the placement experiment. Not started by default:
-  #   docker compose --profile scale up -d storage-node-5
+  # Extra nodes for the placement / scaling experiments. Not started by
+  # default:  docker compose --profile scale up -d storage-node-5 storage-node-6
   storage-node-5:
     build: .
     profiles: ["scale"]
@@ -137,8 +145,27 @@ services:
       CLUSTER_TOKEN: ${CLUSTER_TOKEN:-dev-cluster-token-change-me}
       METADATA_URL: http://storage-coordinator:8000
       HEARTBEAT_INTERVAL: "5"
+      SCRUB_INTERVAL: "300"
+      ALLOW_FAULT_INJECTION: "true"
     volumes:
       - storage-node-5-data:/data
+    restart: unless-stopped
+
+  storage-node-6:
+    build: .
+    profiles: ["scale"]
+    command: ["uvicorn", "storage_node.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    environment:
+      NODE_ID: node6
+      NODE_URL: http://storage-node-6:8000
+      STORAGE_DIR: /data
+      CLUSTER_TOKEN: ${CLUSTER_TOKEN:-dev-cluster-token-change-me}
+      METADATA_URL: http://storage-coordinator:8000
+      HEARTBEAT_INTERVAL: "5"
+      SCRUB_INTERVAL: "300"
+      ALLOW_FAULT_INJECTION: "true"
+    volumes:
+      - storage-node-6-data:/data
     restart: unless-stopped
 
   storage-coordinator:
@@ -155,7 +182,16 @@ services:
       DEFAULT_CHUNKING: fixed
       CHUNK_SIZE: "4194304"
       REPLICATION_FACTOR: "3"
+      WRITE_QUORUM: "2"
+      READ_QUORUM: "2"
+      EC_K: "4"
+      EC_M: "2"
+      EC_BACKEND: zfec
+      REPAIR_INTERVAL: "10"
       MAX_FILE_SIZE: "1073741824"
+      # Development bootstrap admin key (change it, or remove it once you
+      # have created your own admin key through /admin/api-keys).
+      ADMIN_API_KEY: ${ADMIN_API_KEY:-dev-admin-key-change-me}
     depends_on:
       postgres:
         condition: service_healthy
@@ -169,6 +205,22 @@ services:
         condition: service_started
     restart: unless-stopped
 
+  # Public API gateway: authentication, rate limiting, S3-style routes.
+  gateway:
+    build: .
+    command: ["uvicorn", "gateway.main:app", "--host", "0.0.0.0", "--port", "8080"]
+    ports:
+      - "8080:8080"
+    environment:
+      COORDINATOR_URL: http://storage-coordinator:8000
+      CLUSTER_TOKEN: ${CLUSTER_TOKEN:-dev-cluster-token-change-me}
+      RATE_LIMIT_RPS: "20"
+      RATE_LIMIT_BURST_FACTOR: "2"
+      CORS_ORIGINS: "*"
+    depends_on:
+      - storage-coordinator
+    restart: unless-stopped
+
 volumes:
   prometheus-data:
   grafana-data:
@@ -180,3 +232,4 @@ volumes:
   storage-node-3-data:
   storage-node-4-data:
   storage-node-5-data:
+  storage-node-6-data:

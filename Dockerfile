@@ -7,12 +7,18 @@ WORKDIR /app
 
 COPY requirements.txt .
 
+# zfec is optional: if it cannot be installed, the built-in Reed-Solomon
+# codec (coordinator/erasure.py) is used instead.
+RUN pip install --no-cache-dir zfec \
+    || echo "zfec not installed: using the built-in Reed-Solomon codec"
+
 RUN pip install --no-cache-dir -r requirements.txt \
     && useradd --create-home --uid 10001 appuser
 
 COPY coordinator/ ./coordinator/
 COPY storage_node/ ./storage_node/
 COPY client/ ./client/
+COPY gateway/ ./gateway/
 
 RUN mkdir -p /data \
     && chown -R appuser:appuser /app /data

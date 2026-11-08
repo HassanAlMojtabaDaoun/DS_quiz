@@ -1,0 +1,1347 @@
+{
+  "info": {
+    "name": "Distributed Storage Gateway",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "description": "S3-style API of the distributed storage framework. Set baseUrl and apiKey in the collection variables, then run the whole collection with the Collection Runner."
+  },
+  "auth": {
+    "type": "apikey",
+    "apikey": [
+      {
+        "key": "key",
+        "value": "X-API-Key",
+        "type": "string"
+      },
+      {
+        "key": "value",
+        "value": "{{apiKey}}",
+        "type": "string"
+      },
+      {
+        "key": "in",
+        "value": "header",
+        "type": "string"
+      }
+    ]
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8080"
+    },
+    {
+      "key": "apiKey",
+      "value": "dev-admin-key-change-me"
+    },
+    {
+      "key": "bucket",
+      "value": "postman-demo"
+    },
+    {
+      "key": "uploadId",
+      "value": ""
+    },
+    {
+      "key": "roKey",
+      "value": ""
+    },
+    {
+      "key": "roKeyId",
+      "value": ""
+    }
+  ],
+  "item": [
+    {
+      "name": "1. Auth",
+      "item": [
+        {
+          "name": "Health (public)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/health",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "health"
+              ]
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "No API key -> 401",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/buckets",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "buckets"
+              ]
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 401\", () => pm.response.to.have.status(401));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Who am I",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/me",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "me"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"is admin\", () => pm.expect(pm.response.json().role).to.eql(\"admin\"));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "2. Buckets",
+      "item": [
+        {
+          "name": "Create EC bucket (4+2)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/buckets",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "buckets"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"{{bucket}}\",\n  \"redundancy\": \"ec\",\n  \"k\": 4,\n  \"m\": 2\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"created (201) or exists (409)\", () => pm.expect(pm.response.code).to.be.oneOf([201, 409]));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create replicated bucket",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/buckets",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "buckets"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"{{bucket}}-rep\",\n  \"redundancy\": \"replication\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"created (201) or exists (409)\", () => pm.expect(pm.response.code).to.be.oneOf([201, 409]));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List buckets",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/buckets",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "buckets"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Bucket details",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/buckets/{{bucket}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "buckets",
+                "{{bucket}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Bucket storage stats",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/buckets/{{bucket}}/stats",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "buckets",
+                "{{bucket}}",
+                "stats"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "3. Objects",
+      "item": [
+        {
+          "name": "Upload object (streaming PUT)",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "text/plain"
+              },
+              {
+                "key": "X-Tags",
+                "value": "project=midterm,owner=student"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/buckets/{{bucket}}/objects/docs/hello.txt",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "buckets",
+                "{{bucket}}",
+                "objects",
+                "docs",
+                "hello.txt"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "Hello distributed storage! 0123456789\n"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 201\", () => pm.response.to.have.status(201));",
+                  "pm.test(\"tags stored\", () => pm.expect(pm.response.json().tags.project).to.eql(\"midterm\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Upload file (form-data)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/buckets/{{bucket}}/objects",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "buckets",
+                "{{bucket}}",
+                "objects"
+              ]
+            },
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": []
+                },
+                {
+                  "key": "tags",
+                  "value": "kind=upload",
+                  "type": "text"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"201 (select a file first)\", () => pm.expect(pm.response.code).to.be.oneOf([201, 422]));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Download object",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/buckets/{{bucket}}/objects/docs/hello.txt",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "buckets",
+                "{{bucket}}",
+                "objects",
+                "docs",
+                "hello.txt"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"content\", () => pm.expect(pm.response.text()).to.include(\"Hello\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Download byte range (bytes=0-4)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Range",
+                "value": "bytes=0-4"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/buckets/{{bucket}}/objects/docs/hello.txt",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "buckets",
+                "{{bucket}}",
+                "objects",
+                "docs",
+                "hello.txt"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 206\", () => pm.response.to.have.status(206));",
+                  "pm.test(\"5 bytes\", () => pm.expect(pm.response.text()).to.eql(\"Hello\"));",
+                  "pm.test(\"Content-Range\", () => pm.expect(pm.response.headers.get(\"Content-Range\")).to.match(/^bytes 0-4\\//));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "HEAD object",
+          "request": {
+            "method": "HEAD",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/buckets/{{bucket}}/objects/docs/hello.txt",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "buckets",
+                "{{bucket}}",
+                "objects",
+                "docs",
+                "hello.txt"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Object metadata (versions, chunks, shards)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/buckets/{{bucket}}/metadata/docs/hello.txt",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "buckets",
+                "{{bucket}}",
+                "metadata",
+                "docs",
+                "hello.txt"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Replace tags",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/buckets/{{bucket}}/tags/docs/hello.txt",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "buckets",
+                "{{bucket}}",
+                "tags",
+                "docs",
+                "hello.txt"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"tags\": {\n    \"project\": \"midterm\",\n    \"status\": \"final\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List objects with prefix",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/buckets/{{bucket}}/objects?prefix=docs/&limit=50",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "buckets",
+                "{{bucket}}",
+                "objects"
+              ],
+              "query": [
+                {
+                  "key": "prefix",
+                  "value": "docs/"
+                },
+                {
+                  "key": "limit",
+                  "value": "50"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "4. Search",
+      "item": [
+        {
+          "name": "Search by tag",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/search?tags=project=midterm",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "search"
+              ],
+              "query": [
+                {
+                  "key": "tags",
+                  "value": "project=midterm"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"found\", () => pm.expect(pm.response.json().total).to.be.above(0));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Search by prefix + size",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/search?bucket={{bucket}}&prefix=docs/&min_size=10&max_size=1000000",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "search"
+              ],
+              "query": [
+                {
+                  "key": "bucket",
+                  "value": "{{bucket}}"
+                },
+                {
+                  "key": "prefix",
+                  "value": "docs/"
+                },
+                {
+                  "key": "min_size",
+                  "value": "10"
+                },
+                {
+                  "key": "max_size",
+                  "value": "1000000"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Search by date (sorted by size)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/search?created_after=2026-01-01T00:00:00Z&sort=size&order=desc",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "search"
+              ],
+              "query": [
+                {
+                  "key": "created_after",
+                  "value": "2026-01-01T00:00:00Z"
+                },
+                {
+                  "key": "sort",
+                  "value": "size"
+                },
+                {
+                  "key": "order",
+                  "value": "desc"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "5. Multipart upload",
+      "item": [
+        {
+          "name": "Start upload",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/buckets/{{bucket}}/uploads",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "buckets",
+                "{{bucket}}",
+                "uploads"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"key\": \"big/multipart.bin\",\n  \"tags\": \"src=multipart\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 201\", () => pm.response.to.have.status(201));",
+                  "pm.collectionVariables.set(\"uploadId\", pm.response.json().upload_id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Upload part 1",
+          "request": {
+            "method": "PUT",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/uploads/{{uploadId}}/parts/1",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "uploads",
+                "{{uploadId}}",
+                "parts",
+                "1"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-PART-ONE-"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Upload part 2",
+          "request": {
+            "method": "PUT",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/uploads/{{uploadId}}/parts/2",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "uploads",
+                "{{uploadId}}",
+                "parts",
+                "2"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-PART-TWO-"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Upload status",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/uploads/{{uploadId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "uploads",
+                "{{uploadId}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Complete upload",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/uploads/{{uploadId}}/complete",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "uploads",
+                "{{uploadId}}",
+                "complete"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 201\", () => pm.response.to.have.status(201));",
+                  "pm.test(\"multipart etag\", () => pm.expect(pm.response.json().etag).to.match(/-2$/));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "6. Cluster",
+      "item": [
+        {
+          "name": "Cluster status",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/cluster/status",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "cluster",
+                "status"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Nodes",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/cluster/nodes",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "cluster",
+                "nodes"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Repair status",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/cluster/repair",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "cluster",
+                "repair"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Storage stats",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/stats",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "stats"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "7. API keys and roles",
+      "item": [
+        {
+          "name": "Create read-only key",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/admin/api-keys",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "admin",
+                "api-keys"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"postman-readonly\",\n  \"role\": \"readonly\",\n  \"rate_limit_rps\": 2\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 201\", () => pm.response.to.have.status(201));",
+                  "pm.collectionVariables.set(\"roKey\", pm.response.json().api_key);",
+                  "pm.collectionVariables.set(\"roKeyId\", pm.response.json().key_id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Read-only key: read OK",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{roKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/buckets",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "buckets"
+              ]
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Read-only key: write -> 403",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{roKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/buckets/{{bucket}}/objects/docs/hello.txt",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "buckets",
+                "{{bucket}}",
+                "objects",
+                "docs",
+                "hello.txt"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "nope"
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 403\", () => pm.response.to.have.status(403));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List keys",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/admin/api-keys",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "admin",
+                "api-keys"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Revoke read-only key",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/admin/api-keys/{{roKeyId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "admin",
+                "api-keys",
+                "{{roKeyId}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "8. Cleanup",
+      "item": [
+        {
+          "name": "Delete object",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/buckets/{{bucket}}/objects/docs/hello.txt",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "buckets",
+                "{{bucket}}",
+                "objects",
+                "docs",
+                "hello.txt"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Delete bucket (force)",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/buckets/{{bucket}}?force=true",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "buckets",
+                "{{bucket}}"
+              ],
+              "query": [
+                {
+                  "key": "force",
+                  "value": "true"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Delete replicated bucket (force)",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/buckets/{{bucket}}-rep?force=true",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "buckets",
+                "{{bucket}}-rep"
+              ],
+              "query": [
+                {
+                  "key": "force",
+                  "value": "true"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

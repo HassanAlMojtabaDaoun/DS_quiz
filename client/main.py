@@ -90,6 +90,19 @@ def main():
     subparsers.add_parser("nodes")
     subparsers.add_parser("ring")
     subparsers.add_parser("stats")
+    subparsers.add_parser("status")
+    subparsers.add_parser("repair-status")
+    subparsers.add_parser("buckets")
+
+    bucket_parser = subparsers.add_parser("bucket-create")
+    bucket_parser.add_argument("name")
+    bucket_parser.add_argument("--redundancy", choices=["replication", "ec"],
+                               default="replication")
+    bucket_parser.add_argument("--k", type=int, default=4)
+    bucket_parser.add_argument("--m", type=int, default=2)
+
+    bstats_parser = subparsers.add_parser("bucket-stats")
+    bstats_parser.add_argument("name")
 
     args = parser.parse_args()
     base_url = args.url.rstrip("/")
@@ -107,8 +120,21 @@ def main():
             response = httpx.get(f"{base_url}/v1/files/{args.file_id}", timeout=10)
             response.raise_for_status()
             print(json.dumps(response.json(), indent=2))
-        elif args.command in ("ring", "stats"):
-            response = httpx.get(f"{base_url}/v1/{args.command}", timeout=30)
+        elif args.command in ("ring", "stats", "status", "repair-status",
+                              "buckets", "bucket-stats"):
+            path = {"status": "cluster/status", "repair-status": "repair/status",
+                    "bucket-stats": f"buckets/{getattr(args, 'name', '')}/stats"
+                    }.get(args.command, args.command)
+            response = httpx.get(f"{base_url}/v1/{path}", timeout=60)
+            response.raise_for_status()
+            print(json.dumps(response.json(), indent=2))
+        elif args.command == "bucket-create":
+            response = httpx.post(
+                f"{base_url}/v1/buckets", timeout=30,
+                json={"name": args.name, "redundancy": args.redundancy,
+                      "k": args.k, "m": args.m})
+            if response.status_code >= 400:
+                print(response.text, file=sys.stderr)
             response.raise_for_status()
             print(json.dumps(response.json(), indent=2))
         elif args.command == "nodes":

@@ -1,0 +1,175 @@
+{
+  "cluster": {
+    "status": "ok",
+    "node_count": 5,
+    "replication_factor": 3,
+    "write_quorum": 2,
+    "read_quorum": 2,
+    "erasure_codec": "zfec",
+    "warnings": []
+  },
+  "results": [
+    {
+      "workload": "small",
+      "files": 5000,
+      "logical_MiB": 125.97,
+      "schemes": {
+        "replication": {
+          "bucket": "bench-small-rep-194850",
+          "policy": {
+            "name": "bench-small-rep-194850",
+            "redundancy": "replication",
+            "created_at": "2026-11-08T17:48:50.331813+00:00",
+            "replicas": 3,
+            "storage_overhead": 3.0,
+            "tolerates_lost_copies": 2,
+            "write_quorum": 2,
+            "read_quorum": 2
+          },
+          "upload_seconds": 255.85,
+          "upload_MiB_s": 0.49,
+          "files_per_s": 19.5,
+          "unique_MiB": 113.16,
+          "raw_MiB_on_disk": 339.47,
+          "storage_overhead": 3.0,
+          "repair": {
+            "chunks_repaired": 2235,
+            "copies_or_shards_rebuilt": 2235,
+            "bytes_read": 59364935,
+            "bytes_written": 59364935,
+            "chunks_lost": 0,
+            "traffic_MiB": 113.23,
+            "read_per_rebuilt_byte": 1.0
+          }
+        },
+        "ec": {
+          "bucket": "bench-small-ec-194850",
+          "policy": {
+            "name": "bench-small-ec-194850",
+            "redundancy": "ec",
+            "created_at": "2026-11-08T17:48:50.388615+00:00",
+            "k": 4,
+            "m": 2,
+            "storage_overhead": 1.5,
+            "tolerates_lost_shards": 2
+          },
+          "upload_seconds": 268.83,
+          "upload_MiB_s": 0.47,
+          "files_per_s": 18.6,
+          "unique_MiB": 113.16,
+          "raw_MiB_on_disk": 169.74,
+          "storage_overhead": 1.5,
+          "repair": {
+            "chunks_repaired": 4481,
+            "copies_or_shards_rebuilt": 5262,
+            "bytes_read": 118658468,
+            "bytes_written": 34869894,
+            "chunks_lost": 0,
+            "traffic_MiB": 146.42,
+            "read_per_rebuilt_byte": 3.4
+          }
+        }
+      },
+      "degraded_reads": {
+        "replication": {
+          "sampled": 20,
+          "verified_ok": 20,
+          "seconds": 0.81
+        },
+        "ec": {
+          "sampled": 20,
+          "verified_ok": 20,
+          "seconds": 0.88
+        }
+      },
+      "failure": {
+        "node": "node4",
+        "detected": true,
+        "detection_seconds": 15.2,
+        "repair_seconds": 156.1,
+        "fully_repaired": true
+      }
+    },
+    {
+      "workload": "large",
+      "files": 10,
+      "logical_MiB": 1758.12,
+      "schemes": {
+        "replication": {
+          "bucket": "bench-large-rep-200029",
+          "policy": {
+            "name": "bench-large-rep-200029",
+            "redundancy": "replication",
+            "created_at": "2026-11-08T18:00:29.384548+00:00",
+            "replicas": 3,
+            "storage_overhead": 3.0,
+            "tolerates_lost_copies": 2,
+            "write_quorum": 2,
+            "read_quorum": 2
+          },
+          "upload_seconds": 20.51,
+          "upload_MiB_s": 85.7,
+          "files_per_s": 0.5,
+          "unique_MiB": 1694.12,
+          "raw_MiB_on_disk": 5082.36,
+          "storage_overhead": 3.0,
+          "repair": {
+            "chunks_repaired": 171,
+            "copies_or_shards_rebuilt": 171,
+            "bytes_read": 709885952,
+            "bytes_written": 709885952,
+            "chunks_lost": 0,
+            "traffic_MiB": 1354.0,
+            "read_per_rebuilt_byte": 1.0
+          }
+        },
+        "ec": {
+          "bucket": "bench-large-ec-200029",
+          "policy": {
+            "name": "bench-large-ec-200029",
+            "redundancy": "ec",
+            "created_at": "2026-11-08T18:00:29.449710+00:00",
+            "k": 4,
+            "m": 2,
+            "storage_overhead": 1.5,
+            "tolerates_lost_shards": 2
+          },
+          "upload_seconds": 20.23,
+          "upload_MiB_s": 86.91,
+          "files_per_s": 0.5,
+          "unique_MiB": 1694.12,
+          "raw_MiB_on_disk": 2541.18,
+          "storage_overhead": 1.5,
+          "repair": {
+            "chunks_repaired": 383,
+            "copies_or_shards_rebuilt": 461,
+            "bytes_read": 1585571660,
+            "bytes_written": 476874546,
+            "chunks_lost": 0,
+            "traffic_MiB": 1966.9,
+            "read_per_rebuilt_byte": 3.32
+          }
+        }
+      },
+      "degraded_reads": {
+        "replication": {
+          "sampled": 10,
+          "verified_ok": 10,
+          "seconds": 36.9
+        },
+        "ec": {
+          "sampled": 10,
+          "verified_ok": 10,
+          "seconds": 14.87
+        }
+      },
+      "failure": {
+        "node": "node4",
+        "detected": true,
+        "detection_seconds": 15.3,
+        "repair_seconds": 52.2,
+        "fully_repaired": true
+      }
+    }
+  ]
+}
