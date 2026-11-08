@@ -1,0 +1,8 @@
+# Smoke test for the local Kubernetes cluster.
+# kubectl apply -f k8s/00-namespace.yaml
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ds-storage
+  labels:
+    app.kubernetes.io/part-of: distributed-storage
