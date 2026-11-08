@@ -1,7 +1,31 @@
+# Prometheus scrape configuration (docker compose).
 global:
-  scrape_interval: 15s
+  scrape_interval: 5s
+  evaluation_interval: 5s
 
 scrape_configs:
   - job_name: prometheus
     static_configs:
-      - targets: ["prometheus:9090"]
+      - targets: ["localhost:9090"]
+
+  - job_name: coordinator
+    static_configs:
+      - targets: ["storage-coordinator:8000"]
+
+  - job_name: gateway
+    static_configs:
+      - targets: ["gateway-1:8080", "gateway-2:8080"]
+
+  - job_name: storage-nodes
+    static_configs:
+      - targets: ["storage-node-1:8000", "storage-node-2:8000",
+                  "storage-node-3:8000", "storage-node-4:8000"]
+      - targets: ["storage-node-5:8000", "storage-node-6:8000"]
+        labels: { optional: "true" }
+
+  # Workers are replicas of one service: find all of them through DNS.
+  - job_name: workers
+    dns_sd_configs:
+      - names: ["worker"]
+        type: A
+        port: 8000

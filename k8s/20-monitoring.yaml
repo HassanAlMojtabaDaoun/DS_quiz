@@ -1,0 +1,89 @@
+# Prometheus (discovers every pod annotated prometheus.io/scrape) + Grafana.
+apiVersion: v1
+kind: ServiceAccount
+metadata: { name: prometheus, namespace: ds-storage }
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: { name: prometheus, namespace: ds-storage }
+rules:
+  - apiGroups: [""]
+    resources: [pods, services, endpoints]
+    verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: { name: prometheus, namespace: ds-storage }
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: prometheus }
+subjects: [{ kind: ServiceAccount, name: prometheus, namespace: ds-storage }]
+---
+apiVersion: v1
+kind: Service
+metadata: { name: prometheus, namespace: ds-storage }
+spec:
+  type: LoadBalancer
+  selector: { app: prometheus }
+  ports: [{ port: 9090 }]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: prometheus, namespace: ds-storage }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: prometheus } }
+  template:
+    metadata: { labels: { app: prometheus } }
+    spec:
+      serviceAccountName: prometheus
+      containers:
+        - name: prometheus
+          image: prom/prometheus:v2.55.1
+          args: ["--config.file=/etc/prometheus/prometheus.yml"]
+          ports: [{ containerPort: 9090 }]
+          volumeMounts:
+            - { name: config, mountPath: /etc/prometheus }
+          resources:
+            requests: { cpu: 50m, memory: 128Mi }
+      volumes:
+        - name: config
+          configMap: { name: prometheus-config }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: grafana, namespace: ds-storage }
+spec:
+  type: LoadBalancer
+  selector: { app: grafana }
+  ports: [{ port: 3000 }]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: grafana, namespace: ds-storage }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: grafana } }
+  template:
+    metadata: { labels: { app: grafana } }
+    spec:
+      containers:
+        - name: grafana
+          image: grafana/grafana:11.3.0
+          env:
+            - { name: GF_SECURITY_ADMIN_USER, value: admin }
+            - { name: GF_SECURITY_ADMIN_PASSWORD, value: "ChangeMe-123!" }
+            - { name: GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH,
+                value: /var/lib/grafana/dashboards/storage.json }
+          ports: [{ containerPort: 3000 }]
+          volumeMounts:
+            - { name: datasources, mountPath: /etc/grafana/provisioning/datasources }
+            - { name: providers, mountPath: /etc/grafana/provisioning/dashboards }
+            - { name: dashboards, mountPath: /var/lib/grafana/dashboards }
+          resources:
+            requests: { cpu: 50m, memory: 128Mi }
+      volumes:
+        - name: datasources
+          configMap: { name: grafana-datasources }
+        - name: providers
+          configMap: { name: grafana-dashboard-providers }
+        - name: dashboards
+          configMap: { name: grafana-dashboards }

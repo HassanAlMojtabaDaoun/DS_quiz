@@ -541,5 +541,6 @@ async def abort_upload(upload_id: str):
         for p in (upload["parts"] or {}).values():
             garbage += objects.release_chunks(conn, p["hashes"],
                                               upload["policy"])
-    removed = await objects.collect_garbage(garbage)
-    return {"upload_id": upload_id, "aborted": True, "blobs_removed": removed}
+    scheduled = await objects.collect_garbage(garbage)
+    return {"upload_id": upload_id, "aborted": True,
+            "blobs_scheduled_for_gc": scheduled}

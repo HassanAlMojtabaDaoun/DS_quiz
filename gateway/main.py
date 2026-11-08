@@ -49,6 +49,7 @@ from starlette.background import BackgroundTask
 from starlette.middleware.cors import CORSMiddleware
 
 from gateway.ratelimit import RateLimiter
+from observability.metrics import REGISTRY, instrument_app
 
 COORDINATOR_URL = os.getenv("COORDINATOR_URL",
                             "http://storage-coordinator:8000").rstrip("/")
@@ -63,7 +64,11 @@ PRESIGN_SECRET = os.getenv("PRESIGN_SECRET", "dev-presign-secret-change-me")
 PRESIGN_MAX_SECONDS = 3600
 SIGNATURE_PARAMS = ("X-Expires", "X-KeyId", "X-Signature")
 
-OPEN_PATHS = {"/health", "/docs", "/openapi.json"}
+OPEN_PATHS = {"/health", "/docs", "/openapi.json", "/metrics"}
+RATE_LIMITED = REGISTRY.counter("ds_gateway_rate_limited_total",
+                                "Requests rejected with 429", ["reason"])
+AUTH_FAILURES = REGISTRY.counter("ds_gateway_auth_failures_total",
+                                 "Requests rejected with 401/403", ["code"])
 REQUEST_HEADERS = ("range", "if-none-match", "content-type", "x-chunking",
                    "x-tags", "content-length")
 RESPONSE_HEADERS = ("content-type", "content-length", "content-range",
@@ -184,6 +189,7 @@ class AuthMiddleware:
                 if ident is None:
                     return await reply(403, "Invalid or expired presigned URL")
             elif not api_key:
+                AUTH_FAILURES.inc(code="401")
                 return await reply(401, "Missing API key (X-API-Key header)",
                                    [(b"www-authenticate", b"Bearer")])
             else:
@@ -193,7 +199,9 @@ class AuthMiddleware:
                     return await reply(503, "Authentication service unavailable")
             if ident is None:
                 allowed, _, retry, _ = failed_auth.take(f"ip:{client_ip}")
+                AUTH_FAILURES.inc(code="401")
                 if not allowed:
+                    RATE_LIMITED.inc(reason="failed_auth")
                     return await reply(429, "Too many failed authentications",
                                        [(b"retry-after",
                                          str(max(1, round(retry))).encode())])
@@ -202,6 +210,7 @@ class AuthMiddleware:
 
             need = required_role(method, path)
             if ROLE_RANK[ident["role"]] < ROLE_RANK[need]:
+                AUTH_FAILURES.inc(code="403")
                 return await reply(403, f"Role '{ident['role']}' cannot "
                                         f"perform this operation "
                                         f"(needs '{need}')")
@@ -211,6 +220,7 @@ class AuthMiddleware:
             extra += [(b"x-ratelimit-limit", str(limit).encode()),
                       (b"x-ratelimit-remaining", str(left).encode())]
             if not allowed:
+                RATE_LIMITED.inc(reason="key")
                 return await reply(429, "Rate limit exceeded",
                                    [(b"retry-after",
                                      str(max(1, round(retry + 0.5))).encode())])
@@ -242,6 +252,7 @@ app.add_middleware(
                     "X-Object-Version", "X-Object-Id", "X-Object-Tags",
                     "X-RateLimit-Limit", "X-RateLimit-Remaining",
                     "Retry-After", "X-Served-By"])
+instrument_app(app, "gateway")      # outermost: also counts 401/403/429
 
 
 # ---------------------------------------------------------------------------
@@ -327,6 +338,11 @@ async def health():
     return {"status": "ok", "gateway": GATEWAY_ID,
             "default_rate_limit_rps": RATE_LIMIT_RPS,
             "coordinator": coordinator}
+
+
+@app.get("/metrics")
+def metrics():
+    return Response(REGISTRY.render(), media_type="text/plain; version=0.0.4")
 
 
 @app.get("/me")

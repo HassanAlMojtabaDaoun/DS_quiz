@@ -6,6 +6,22 @@ PostgreSQL. Data is protected per bucket by replication with quorums or by
 Reed-Solomon erasure coding; failed nodes are detected by heartbeats and
 their data is rebuilt automatically; a scrubber detects bit rot.
 
+## Architecture
+```
+ browser / clients
+        |                      :3001 ui (nginx, React)   :3000 grafana  :9090 prometheus
+        v
+   :8080 lb (nginx, least_conn) ----> gateway-1, gateway-2   (API keys, rate limit, S3 API)
+                                          |
+                                          v
+                               storage-coordinator (metadata, placement, repair planning)
+                                 |         |          |                 \
+                          postgres   elasticsearch   kafka (job queue)   storage-node-1..4 (+5,6)
+                                                        |                       ^
+                                                     worker x2 -----------------+
+                                         (repair / rebalance / gc batches)
+```
+
 ## Layout
 | Path | Role |
 |---|---|
@@ -25,6 +41,14 @@ their data is rebuilt automatically; a scrubber detects bit rot.
 | `coordinator/main.py` | Core HTTP API (nodes, buckets, repair, admin) |
 | `gateway/main.py` | **Public API gateway**: API-key auth, roles, rate limiting, streaming proxy |
 | `gateway/ratelimit.py` | Token-bucket rate limiter |
+| `coordinator/jobs.py` | Job tracking + queue (Kafka, PostgreSQL fallback), at-least-once |
+| `coordinator/worker.py` | Worker service executing repair / rebalance / gc batches |
+| `observability/metrics.py` | Prometheus metrics (no dependency) used by every service |
+| `docker/*.Dockerfile` | One Dockerfile per service |
+| `lb/nginx.conf` | Load balancer in front of the 2 gateways |
+| `monitoring/` | Prometheus config, Grafana provisioning and dashboard |
+| `k8s/` | Kubernetes manifests (StatefulSet, CloudNativePG, HPA, ...), `kubectl apply -k k8s/` |
+| `docs/kubernetes.md`, `docs/cloud-deployment.md` | Kubernetes and cloud deployment guides |
 | `coordinator/search_index.py` | Elasticsearch index over metadata (async sync, full-text query, facets) |
 | `ui/` | React web UI (source in `ui/src`, prebuilt bundle in `ui/dist`, served by nginx) |
 | `docs/postman_collection.json` | Postman collection (36 requests with tests) |
@@ -48,8 +72,8 @@ docker compose up --build -d
 docker compose ps
 python -m client.main nodes
 ```
-Users talk to the **gateway** on port 8080 with an API key; port 8000
-(coordinator) is the internal service API used by the CLI and scripts.
+Users talk to the **load balancer / gateways** on port 8080 with an API key;
+port 8000 (coordinator) is the internal service API used by the CLI and scripts.
 
 ## 3. Public API (gateway, port 8080)
 Every request except `/health` needs `X-API-Key: <key>` (or
@@ -164,9 +188,29 @@ python scripts/redundancy_benchmark.py --small datasets/small --large datasets/l
 | `VNODES` | 128 | virtual nodes per storage node |
 | `ALLOW_FAULT_INJECTION` (nodes) | true | enables the bit-rot demo endpoint (disable in production) |
 
-## 8. Kubernetes (Docker Desktop)
+## 8. Load balancing, job queue, monitoring (Bonus 7)
+| | |
+|---|---|
+| Load balancer | `lb` (nginx) on :8080, `least_conn` over `gateway-1` and `gateway-2`, passive health checks, retry on the other gateway. Every response has `X-Served-By`. |
+| Job queue | repair / rebalance / gc jobs are split into batches on the Kafka topic `storage-jobs` (6 partitions); the 2 `worker` containers form the consumer group `storage-workers`. PostgreSQL table `job_queue` is the fallback. `GET /v1/jobs` shows jobs and progress. |
+| Monitoring | every service exposes `/metrics`; Prometheus :9090, Grafana :3000 (admin / ChangeMe-123!) dashboard "Distributed Storage - Overview": throughput, latency, disk per node, degraded objects, repair rate, workers. |
+| Elastic membership | a new storage node joins the ring by itself (`AUTO_JOIN`) and a rebalance job follows 15 s later. |
+
 ```powershell
-kubectl config use-context docker-desktop
-kubectl get nodes
-kubectl apply -f k8s/00-namespace.yaml
+docker compose up --build -d --remove-orphans
+python scripts/load_test.py --duration 30        # requests split over gateway-1 / gateway-2
+docker compose stop gateway-1                     # all traffic continues on gateway-2
+docker compose --profile scale up -d storage-node-5   # auto-join + rebalance
+curl.exe http://localhost:8000/v1/jobs
+```
+
+## 9. Kubernetes and cloud (Bonus 8)
+StatefulSet with persistent volumes and liveness/readiness probes for the
+storage nodes, a 3-instance replicated PostgreSQL (CloudNativePG, automatic
+failover), Kafka, workers, an autoscaled gateway (HPA 2-6 pods), UI,
+Prometheus and Grafana. See **docs/kubernetes.md** (Docker Desktop) and
+**docs/cloud-deployment.md** (GKE / EKS / AKS).
+```powershell
+docker compose build
+kubectl apply -k k8s/
 ```

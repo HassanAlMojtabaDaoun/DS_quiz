@@ -1,0 +1,33 @@
+# kubectl apply -k k8s/      (after installing the CloudNativePG operator)
+#
+# For a cloud cluster, push the images to a registry and set it here, e.g.
+#   images:
+#     - name: ds-storage/gateway
+#       newName: ghcr.io/<user>/ds-storage-gateway
+#       newTag: "1.0"
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: ds-storage
+resources:
+  - 00-namespace.yaml
+  - 01-config.yaml
+  - 02-postgres-cnpg.yaml
+  - 03-kafka.yaml
+  - 04-elasticsearch.yaml
+  - 10-storage-nodes.yaml
+  - 11-coordinator.yaml
+  - 12-worker.yaml
+  - 13-gateway.yaml
+  - 14-ui.yaml
+  - 20-monitoring.yaml
+configMapGenerator:
+  - name: prometheus-config
+    files: [prometheus.yml=monitoring/prometheus.yml]
+  - name: grafana-datasources
+    files: [prometheus.yml=monitoring/datasources.yml]
+  - name: grafana-dashboard-providers
+    files: [dashboards.yml=monitoring/providers.yml]
+  - name: grafana-dashboards
+    files: [storage.json=monitoring/storage.json]
+generatorOptions:
+  disableNameSuffixHash: true

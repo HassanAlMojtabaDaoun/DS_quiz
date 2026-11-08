@@ -24,7 +24,9 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from coordinator import (api_keys, api_objects, cluster, config, erasure,
-                         objects, repair, search_index)
+                         jobs, objects, repair, search_index, worker)
+from fastapi.responses import Response
+from observability.metrics import REGISTRY, instrument_app
 from coordinator.db import connect_db, init_db
 from coordinator.objects import describe_bucket, ensure_bucket
 from coordinator.redundancy import policy_key
@@ -44,6 +46,8 @@ async def lifespan(app: FastAPI):
     ensure_bucket("default")
     tasks = [asyncio.create_task(repair.repair_loop()),
              asyncio.create_task(search_index.sync_loop())]
+    # In-process job workers (0 when separate worker containers are used).
+    tasks += worker.start_workers(config.LOCAL_WORKERS, "coordinator")
     try:
         yield
     finally:
@@ -61,6 +65,7 @@ app = FastAPI(title="Distributed Content-Addressed Storage",
 # S3-style object API and API-key management (used by the gateway).
 app.include_router(api_objects.router)
 app.include_router(api_keys.router)
+instrument_app(app, "coordinator")
 
 
 def check_cluster_token(token: str | None) -> None:
@@ -111,6 +116,8 @@ def receive_heartbeat(payload: dict,
         raise HTTPException(status_code=400, detail="Invalid node url")
     if url:
         cluster.KNOWN_URLS.setdefault(node_id, str(url).rstrip("/"))
+        if config.AUTO_JOIN and node_id not in cluster.NODES:
+            auto_join(node_id, str(url).rstrip("/"))
 
     try:
         free_bytes = int(payload["free_bytes"])
@@ -459,6 +466,8 @@ def add_ring_node(node: NodeIn,
             "INSERT INTO ring_members (node_id, url) VALUES (%s, %s) "
             "ON CONFLICT (node_id) DO UPDATE SET url = EXCLUDED.url",
             (node.node_id, url))
+        conn.execute("DELETE FROM decommissioned_nodes WHERE node_id = %s",
+                     (node.node_id,))
     cluster.load_membership()
     return {"added": node.node_id, "url": url,
             "members": sorted(cluster.NODES),
@@ -477,27 +486,74 @@ def remove_ring_node(node_id: str,
                                    "than the replication factor")
     with connect_db() as conn:
         conn.execute("DELETE FROM ring_members WHERE node_id = %s", (node_id,))
+        # Remember the decision, so AUTO_JOIN does not add it back while it
+        # keeps sending heartbeats during its decommissioning.
+        conn.execute("INSERT INTO decommissioned_nodes (node_id) VALUES (%s) "
+                     "ON CONFLICT DO NOTHING", (node_id,))
     cluster.load_membership()
     return {"removed": node_id, "members": sorted(cluster.NODES),
             "next_step": "POST /v1/admin/rebalance to move chunks"}
 
 
-REBALANCE_LOCK = asyncio.Lock()
+def auto_join(node_id: str, url: str) -> None:
+    """A new node announced itself: add it to the ring and schedule a
+    rebalance (debounced, so several new nodes produce one rebalance)."""
+    with connect_db() as conn:
+        if conn.execute("SELECT 1 FROM decommissioned_nodes WHERE node_id = %s",
+                        (node_id,)).fetchone():
+            return
+        conn.execute("INSERT INTO ring_members (node_id, url) VALUES (%s, %s) "
+                     "ON CONFLICT (node_id) DO NOTHING", (node_id, url))
+    cluster.load_membership()
+    import time as _time
+    repair.PENDING_REBALANCE["at"] = _time.monotonic() + config.REBALANCE_DELAY
+    repair.PENDING_REBALANCE["nodes"].append(node_id)
+    print(f"[membership] {node_id} joined the ring automatically; rebalance in "
+          f"{config.REBALANCE_DELAY:.0f} s", flush=True)
 
 
 @app.post("/v1/admin/rebalance")
-async def rebalance(dry_run: bool = False,
+async def rebalance(dry_run: bool = False, wait: bool = True,
                     x_cluster_token: str | None = Header(default=None)):
+    """Queue a rebalance job (moves to workers). With wait=true (default)
+    the call returns when the job has finished (or after 10 minutes)."""
     check_cluster_token(x_cluster_token)
-    if REBALANCE_LOCK.locked():
+    if not dry_run and jobs.active_job("rebalance"):
         raise HTTPException(status_code=409, detail="Rebalance already running")
-    async with REBALANCE_LOCK:
-        return await repair.rebalance(dry_run)
+    job = await repair.start_rebalance("manual", dry_run=dry_run)
+    if dry_run or not wait:
+        return repair.rebalance_summary(job) if not dry_run else job
+    deadline = asyncio.get_running_loop().time() + 600
+    while job["status"] == "running" and asyncio.get_running_loop().time() < deadline:
+        await asyncio.sleep(0.5)
+        job = jobs.describe(jobs.get_job(job["job_id"]))
+    return repair.rebalance_summary(job)
 
 
 @app.get("/v1/admin/rebalance")
 def last_rebalance():
-    return repair.LAST_REBALANCE or {"status": "never run"}
+    recent = jobs.recent_jobs("rebalance", 1)
+    return repair.rebalance_summary(jobs.describe(recent[0])) if recent \
+        else {"status": "never run"}
+
+
+@app.get("/v1/jobs")
+def list_jobs(type: str | None = None, limit: int = 20):
+    """Recent background jobs (repair, rebalance, gc) and the queue state."""
+    return {"backend": config.JOB_BACKEND, "queue": jobs.STATE,
+            "pending_batches_in_postgres": jobs.queue_length(),
+            "jobs": [jobs.describe(j) for j in jobs.recent_jobs(type, min(limit, 100))]}
+
+
+@app.get("/v1/jobs/{job_id}")
+def get_job(job_id: str):
+    try:
+        row = jobs.get_job(job_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid job id")
+    if row is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return jobs.describe(row)
 
 
 # ---------------------------------------------------------------------------
@@ -506,11 +562,12 @@ def last_rebalance():
 
 @app.get("/v1/repair/status")
 def repair_status():
+    view = repair.status_view()
     return {"failed_nodes": sorted(cluster.failed_nodes()),
-            "state": repair.REPAIR_STATUS["state"],
-            "current_job": repair.REPAIR_STATUS["current"],
-            "totals": repair.REPAIR_STATUS["totals"],
-            "history": repair.REPAIR_STATUS["history"],
+            "state": view["state"],
+            "current_job": view["current"],
+            "totals": view["totals"],
+            "history": view["history"],
             "recent_scrub_reports": repair.SCRUB_REPORTS[:10]}
 
 
@@ -518,7 +575,8 @@ def repair_status():
 async def trigger_repair(x_cluster_token: str | None = Header(default=None)):
     check_cluster_token(x_cluster_token)
     job = await repair.run_repair("manual")
-    return job or {"status": "nothing to repair (or a repair is running)"}
+    return job or {"status": "nothing to repair (or a repair is running)",
+                   **repair.status_view()}
 
 
 class ScrubReport(BaseModel):
@@ -551,12 +609,18 @@ async def scrub_all(x_cluster_token: str | None = Header(default=None)):
     await asyncio.sleep(0.5)      # let the reports reach us
     job = await repair.run_repair("scrub")
     if job is None:
-        # The background loop may already be repairing what was reported.
+        # The background loop may already have queued the repair.
         async with repair.REPAIR_LOCK:
             pass
-        latest = (repair.REPAIR_STATUS["history"] or [None])[0]
-        if latest and latest["started_at"] >= started.isoformat():
-            job = latest
+        recent = jobs.recent_jobs("repair", 1)
+        if recent and recent[0]["created_at"] >= started:
+            job = jobs.describe(recent[0])
+    if job and job["status"] == "running":       # wait for the workers
+        for _ in range(120):
+            await asyncio.sleep(0.5)
+            job = jobs.describe(jobs.get_job(job["job_id"]))
+            if job["status"] != "running":
+                break
     return {"scrub": results, "repair": job}
 
 
@@ -634,13 +698,107 @@ def storage_stats():
 def cluster_status():
     """Nodes, free space, blobs per node, degraded objects, repair state."""
     nodes = get_nodes()["nodes"]
-    health_info = repair.health_summary()
+    health_info = cached_health()
+    view = repair.status_view()
     return {
         "nodes": nodes,
         "total_free_bytes": sum(n.get("free_bytes", 0) for n in nodes
                                 if n.get("status") == "healthy"),
         **health_info,
-        "repair": {"state": repair.REPAIR_STATUS["state"],
-                   "current_job": repair.REPAIR_STATUS["current"],
-                   "last_job": (repair.REPAIR_STATUS["history"] or [None])[0]},
+        "repair": {"state": view["state"],
+                   "current_job": view["current"],
+                   "last_job": (view["history"] or [None])[0]},
+        "jobs": {"backend": config.JOB_BACKEND,
+                 "pending_batches": jobs.queue_length()},
     }
+
+
+# ---------------------------------------------------------------------------
+# Prometheus metrics
+# ---------------------------------------------------------------------------
+
+_HEALTH_CACHE = {"at": 0.0, "value": None}
+
+
+def cached_health() -> dict:
+    """health_summary() scans the whole catalog: cache it for 5 seconds."""
+    import time as _time
+    now = _time.monotonic()
+    if _HEALTH_CACHE["value"] is None or now - _HEALTH_CACHE["at"] > 5:
+        _HEALTH_CACHE.update(at=now, value=repair.health_summary())
+    return _HEALTH_CACHE["value"]
+
+
+def _node_rows():
+    with connect_db() as conn:
+        return conn.execute(
+            "SELECT node_id, free_bytes, total_bytes, stored_bytes, chunk_count, "
+            "EXTRACT(EPOCH FROM (NOW() - last_seen)) AS age FROM node_heartbeats"
+        ).fetchall()
+
+
+def _per_node(field):
+    def fn():
+        return [({"node": r["node_id"]}, r[field]) for r in _node_rows()]
+    return fn
+
+
+def _health_value(field):
+    return lambda: [({}, cached_health()[field])]
+
+
+def _repair_totals(field):
+    def fn():
+        totals = repair.status_view()["totals"]
+        return [({"scheme": s}, totals[s][field]) for s in ("replication", "ec")]
+    return fn
+
+
+def _storage(field):
+    def fn():
+        s = storage_stats()
+        return [({}, s[field])]
+    return fn
+
+
+REGISTRY.gauge("ds_node_up", "1 if the node's heartbeat is recent", ["node"],
+               fn=lambda: [({"node": r["node_id"]},
+                            int(float(r["age"]) <= config.HEARTBEAT_TIMEOUT))
+                           for r in _node_rows()])
+REGISTRY.gauge("ds_node_free_bytes", "Free disk space per node", ["node"],
+               fn=_per_node("free_bytes"))
+REGISTRY.gauge("ds_node_total_bytes", "Disk size per node", ["node"],
+               fn=_per_node("total_bytes"))
+REGISTRY.gauge("ds_node_stored_bytes", "Bytes of chunks stored per node", ["node"],
+               fn=_per_node("stored_bytes"))
+REGISTRY.gauge("ds_node_blobs", "Blobs (replicas + shards) stored per node",
+               ["node"], fn=_per_node("chunk_count"))
+REGISTRY.gauge("ds_ring_members", "Nodes in the consistent hashing ring",
+               fn=lambda: [({}, len(cluster.NODES))])
+for _field, _help in (("objects_total", "Objects (versions)"),
+                      ("chunks_total", "Unique chunks"),
+                      ("objects_degraded", "Objects below full redundancy"),
+                      ("objects_unavailable", "Objects that cannot be read"),
+                      ("chunks_degraded", "Chunks below full redundancy"),
+                      ("chunks_unavailable", "Chunks that cannot be read")):
+    REGISTRY.gauge(f"ds_{_field}", _help, fn=_health_value(_field))
+REGISTRY.gauge("ds_logical_bytes", "Bytes uploaded by users (all versions)",
+               fn=_storage("logical_bytes"))
+REGISTRY.gauge("ds_raw_bytes", "Bytes on disk including redundancy",
+               fn=_storage("raw_bytes_on_disk"))
+for _field in ("bytes_read", "bytes_written", "chunks_repaired",
+               "copies_or_shards_rebuilt", "chunks_lost"):
+    REGISTRY.gauge(f"ds_repair_{_field}_total",
+                   f"Repair {_field.replace('_', ' ')} since the beginning "
+                   "(monotonic, use rate())", ["scheme"],
+                   fn=_repair_totals(_field))
+REGISTRY.gauge("ds_jobs_pending_batches", "Batches waiting in the PostgreSQL queue",
+               fn=lambda: [({}, jobs.queue_length())])
+REGISTRY.gauge("ds_jobs_running", "Running jobs per type", ["type"],
+               fn=lambda: [({"type": t}, int(jobs.active_job(t) is not None))
+                           for t in ("repair", "rebalance", "gc")])
+
+
+@app.get("/metrics")
+def metrics():
+    return Response(REGISTRY.render(), media_type="text/plain; version=0.0.4")

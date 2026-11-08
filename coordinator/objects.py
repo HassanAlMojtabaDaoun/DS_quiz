@@ -21,12 +21,11 @@ from uuid import uuid4
 import httpx
 from fastapi import HTTPException
 
-from coordinator import cluster, config, search_index
+from coordinator import cluster, config, jobs, search_index
 from coordinator.chunking import StreamChunker
 from coordinator.db import connect_db
 from coordinator.ranges import chunks_for_range
-from coordinator.redundancy import (blobs_of, delete_unreferenced,
-                                    insert_catalog_entry, policy_key,
+from coordinator.redundancy import (blobs_of, insert_catalog_entry, policy_key,
                                     read_chunk, store_chunk)
 
 BUCKET_RE = re.compile(r"[a-z0-9][a-z0-9.-]{1,62}")
@@ -377,11 +376,14 @@ def release_chunks(conn, hashes: list[str], policy: str) -> list[dict]:
 
 
 async def collect_garbage(garbage_rows: list[dict]) -> int:
-    pairs = [p for row in garbage_rows for p in blobs_of(row)]
+    """Queue the blobs of unreferenced chunks for deletion (a "gc" job run
+    by the workers). Returns the number of blobs scheduled."""
+    pairs = sorted({p for row in garbage_rows for p in blobs_of(row)})
     if not pairs:
         return 0
-    async with httpx.AsyncClient(timeout=60) as client:
-        return await delete_unreferenced(client, pairs)
+    await jobs.create_job("gc", "unreferenced chunks", [list(p) for p in pairs],
+                          batch_size=200)
+    return len(pairs)
 
 
 async def delete_versions(where_sql: str, params: tuple) -> dict:
@@ -396,9 +398,9 @@ async def delete_versions(where_sql: str, params: tuple) -> dict:
             garbage += release_chunks(conn, row["chunk_hashes"], row["policy"])
     for row in rows:
         search_index.mark_dirty(row["bucket"], row["object_key"])
-    removed = await collect_garbage(garbage)
+    scheduled = await collect_garbage(garbage)
     return {"versions_deleted": len(rows),
             "deleted": [{"bucket": r["bucket"], "key": r["object_key"],
                          "version": r["version"]} for r in rows],
             "chunks_garbage_collected": len(garbage),
-            "blobs_removed": removed}
+            "blobs_scheduled_for_gc": scheduled}

@@ -1,0 +1,38 @@
+# Repair workers: members of the Kafka consumer group `storage-workers`.
+# Scale freely: kubectl -n ds-storage scale deployment worker --replicas=4
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: worker
+  namespace: ds-storage
+spec:
+  replicas: 2
+  selector: { matchLabels: { app: worker } }
+  template:
+    metadata:
+      labels: { app: worker }
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8000"
+    spec:
+      containers:
+        - name: worker
+          image: ds-storage/worker:1.0
+          imagePullPolicy: IfNotPresent
+          ports: [{ name: http, containerPort: 8000 }]
+          envFrom:
+            - configMapRef: { name: ds-config }
+            - secretRef: { name: ds-secrets }
+          env:
+            - name: DATABASE_URL
+              valueFrom: { secretKeyRef: { name: storage-db-app, key: uri } }
+            - name: WORKER_ID
+              valueFrom: { fieldRef: { fieldPath: metadata.name } }
+            - { name: WORKER_CONCURRENCY, value: "2" }
+          livenessProbe:
+            httpGet: { path: /health, port: http }
+            initialDelaySeconds: 20
+            periodSeconds: 10
+          resources:
+            requests: { cpu: 100m, memory: 128Mi }
+            limits: { memory: 1Gi }

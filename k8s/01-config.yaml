@@ -1,0 +1,33 @@
+# Settings shared by the services, and secrets (change them for real use).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ds-config
+  namespace: ds-storage
+data:
+  # Seed members of the ring: the StatefulSet pods have stable DNS names.
+  NODE_URLS: >-
+    storage-node-0=http://storage-node-0.storage-node:8000,storage-node-1=http://storage-node-1.storage-node:8000,storage-node-2=http://storage-node-2.storage-node:8000,storage-node-3=http://storage-node-3.storage-node:8000
+  HEARTBEAT_TIMEOUT: "15"
+  CHUNK_SIZE: "4194304"
+  REPLICATION_FACTOR: "3"
+  WRITE_QUORUM: "2"
+  READ_QUORUM: "2"
+  EC_K: "4"
+  EC_M: "2"
+  EC_BACKEND: zfec
+  JOB_BACKEND: kafka
+  KAFKA_BOOTSTRAP: kafka-0.kafka:9092
+  METADATA_URL: http://storage-coordinator:8000
+  COORDINATOR_URL: http://storage-coordinator:8000
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: ds-secrets
+  namespace: ds-storage
+type: Opaque
+stringData:
+  CLUSTER_TOKEN: dev-cluster-token-change-me
+  ADMIN_API_KEY: dev-admin-key-change-me
+  PRESIGN_SECRET: dev-presign-secret-change-me

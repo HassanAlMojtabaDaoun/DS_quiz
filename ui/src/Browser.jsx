@@ -98,7 +98,7 @@ export default function Browser({ me }) {
     if (!confirm(`Delete ${o.key} (all versions)?`)) return;
     try {
       const r = await deleteObject(bucket, o.key);
-      toast(`Deleted ${o.key}: ${r.blobs_removed} blobs garbage-collected`, "success");
+      toast(`Deleted ${o.key}: ${r.blobs_scheduled_for_gc} blobs queued for garbage collection`, "success");
       loadObjects(); loadBuckets();
     } catch (e) { toast(e.message, "error"); }
   };

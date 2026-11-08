@@ -1,0 +1,55 @@
+# Coordinator (metadata service). One replica: it runs the leader loops
+# (failure detection, repair planning, rebalance planning); the heavy work
+# is done by the workers. Its state is in PostgreSQL, so a restarted pod
+# continues where the old one stopped.
+apiVersion: v1
+kind: Service
+metadata:
+  name: storage-coordinator
+  namespace: ds-storage
+spec:
+  selector: { app: storage-coordinator }
+  ports: [{ name: http, port: 8000 }]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: storage-coordinator
+  namespace: ds-storage
+spec:
+  replicas: 1
+  strategy: { type: Recreate }
+  selector: { matchLabels: { app: storage-coordinator } }
+  template:
+    metadata:
+      labels: { app: storage-coordinator }
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8000"
+    spec:
+      containers:
+        - name: coordinator
+          image: ds-storage/coordinator:1.0
+          imagePullPolicy: IfNotPresent
+          ports: [{ name: http, containerPort: 8000 }]
+          envFrom:
+            - configMapRef: { name: ds-config }
+            - secretRef: { name: ds-secrets }
+          env:
+            - name: DATABASE_URL           # primary of the CloudNativePG cluster
+              valueFrom: { secretKeyRef: { name: storage-db-app, key: uri } }
+            - { name: LOCAL_WORKERS, value: "0" }
+            - { name: AUTO_JOIN, value: "true" }
+            - { name: REBALANCE_DELAY, value: "15" }
+            - { name: ES_URL, value: "http://elasticsearch:9200" }
+          livenessProbe:
+            httpGet: { path: /health, port: http }
+            initialDelaySeconds: 20
+            periodSeconds: 10
+          readinessProbe:
+            httpGet: { path: /health, port: http }
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          resources:
+            requests: { cpu: 100m, memory: 192Mi }
+            limits: { memory: 1Gi }

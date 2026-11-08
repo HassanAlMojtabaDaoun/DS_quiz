@@ -163,4 +163,39 @@ def init_db():
             ON chunk_catalog USING GIN (shards jsonb_path_ops)
         """)
 
+        conn.execute("CREATE TABLE IF NOT EXISTS decommissioned_nodes "
+                     "(node_id TEXT PRIMARY KEY, at TIMESTAMPTZ DEFAULT NOW())")
+
+        # Background jobs and the PostgreSQL job queue (also the fallback
+        # when Kafka is not available).
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS jobs (
+                job_id UUID PRIMARY KEY,
+                type TEXT NOT NULL,
+                reason TEXT,
+                status TEXT NOT NULL DEFAULT 'running',
+                total INT NOT NULL,
+                done INT NOT NULL DEFAULT 0,
+                counters JSONB NOT NULL DEFAULT '{}'::jsonb,
+                lost JSONB NOT NULL DEFAULT '[]'::jsonb,
+                meta JSONB NOT NULL DEFAULT '{}'::jsonb,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                finished_at TIMESTAMPTZ
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_jobs_type_created "
+                     "ON jobs (type, created_at DESC)")
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS job_queue (
+                id BIGSERIAL PRIMARY KEY,
+                job_id UUID NOT NULL,
+                type TEXT NOT NULL,
+                payload JSONB NOT NULL,
+                enqueued_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                locked_by TEXT,
+                locked_until TIMESTAMPTZ,
+                attempts INT NOT NULL DEFAULT 0
+            )
+        """)
+
         conn.execute("DROP TABLE IF EXISTS manifests")

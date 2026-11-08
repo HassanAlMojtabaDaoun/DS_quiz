@@ -56,13 +56,35 @@ REPAIR_ENABLED = os.getenv("REPAIR_ENABLED", "true").lower() == "true"
 REPAIR_CONCURRENCY = int(os.getenv("REPAIR_CONCURRENCY", "8"))
 
 
+# --- Background jobs (repair, rebalance, garbage collection) ---------------
+# Jobs are split into batches and put on a queue; workers (separate
+# containers, or LOCAL_WORKERS tasks inside the coordinator) execute them.
+JOB_BACKEND = os.getenv("JOB_BACKEND", "postgres")        # postgres | kafka
+KAFKA_BOOTSTRAP = os.getenv("KAFKA_BOOTSTRAP", "kafka:9092")
+KAFKA_TOPIC = os.getenv("KAFKA_TOPIC", "storage-jobs")
+KAFKA_GROUP = os.getenv("KAFKA_GROUP", "storage-workers")
+LOCAL_WORKERS = int(os.getenv("LOCAL_WORKERS", "2"))
+JOB_BATCH_SIZE = int(os.getenv("JOB_BATCH_SIZE", "50"))
+JOB_TIMEOUT = float(os.getenv("JOB_TIMEOUT", "900"))
+JOB_LEASE_SECONDS = int(os.getenv("JOB_LEASE_SECONDS", "300"))
+
+# --- Elastic membership -------------------------------------------------------
+# A node that starts sending heartbeats joins the ring automatically and a
+# rebalance job is scheduled REBALANCE_DELAY seconds later.
+AUTO_JOIN = os.getenv("AUTO_JOIN", "false").lower() == "true"
+REBALANCE_DELAY = float(os.getenv("REBALANCE_DELAY", "15"))
+
+
 def validate() -> list[str]:
     """Raise on impossible settings, return warnings for weak ones."""
     warnings = []
     if CHUNK_SIZE <= 0 or MAX_FILE_SIZE < 0:
         raise RuntimeError("Invalid size configuration")
-    if REPLICATION_FACTOR < 1 or REPLICATION_FACTOR > len(SEED_NODES):
-        raise RuntimeError("Invalid replication factor or insufficient nodes")
+    if REPLICATION_FACTOR < 1:
+        raise RuntimeError("Invalid replication factor")
+    if len(SEED_NODES) < REPLICATION_FACTOR and not AUTO_JOIN:
+        raise RuntimeError("Fewer seed nodes than the replication factor "
+                           "(set NODE_URLS or AUTO_JOIN=true)")
     if not (1 <= WRITE_QUORUM <= REPLICATION_FACTOR):
         raise RuntimeError("WRITE_QUORUM must be between 1 and N")
     if not (1 <= READ_QUORUM <= REPLICATION_FACTOR):

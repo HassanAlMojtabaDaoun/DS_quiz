@@ -21,6 +21,8 @@ from pathlib import Path
 import httpx
 from fastapi import FastAPI, Header, HTTPException, Request, Response
 
+from observability.metrics import REGISTRY, instrument_app
+
 NODE_ID = os.getenv("NODE_ID", "node1")
 STORAGE_DIR = Path(os.getenv("STORAGE_DIR", "/data")).resolve()
 CLUSTER_TOKEN = os.getenv("CLUSTER_TOKEN", "dev-cluster-token-change-me")
@@ -44,6 +46,22 @@ STORAGE_DIR.mkdir(parents=True, exist_ok=True)
 QUARANTINE_DIR.mkdir(parents=True, exist_ok=True)
 
 SCRUB_STATUS: dict = {"passes": 0, "last_pass": None}
+LAST_STATS: dict = {}          # refreshed with every heartbeat
+FAULTS = {"unhealthy": False}  # demo: make the liveness probe fail
+
+SCRUB_PASSES = REGISTRY.counter("ds_scrub_passes_total", "Completed scrub passes",
+                                ["node"])
+SCRUB_CHECKED = REGISTRY.counter("ds_scrub_chunks_checked_total",
+                                 "Chunks re-read by the scrubber", ["node"])
+CORRUPTION = REGISTRY.counter("ds_corrupted_chunks_total",
+                              "Corrupted chunks detected", ["node", "detected_by"])
+for _name, _field, _help in (
+        ("ds_storage_chunks", "chunk_count", "Blobs stored on this node"),
+        ("ds_storage_stored_bytes", "stored_bytes", "Bytes stored on this node"),
+        ("ds_storage_free_bytes", "free_bytes", "Free bytes on the data disk"),
+        ("ds_storage_total_bytes", "total_bytes", "Size of the data disk")):
+    REGISTRY.gauge(_name, _help, ["node"],
+                   fn=(lambda f=_field: [({"node": NODE_ID}, LAST_STATS.get(f))]))
 
 
 # ---------------------------------------------------------------------------
@@ -129,6 +147,7 @@ async def heartbeat_loop():
         while True:
             try:
                 stats = await asyncio.to_thread(collect_node_stats)
+                LAST_STATS.update(stats)
                 response = await client.post(
                     f"{METADATA_URL}/v1/nodes/heartbeat",
                     json=stats, headers=headers)
@@ -162,10 +181,13 @@ async def scrub_once() -> dict:
                   flush=True)
             quarantine(path)
             corrupted.append(path.name)
+            CORRUPTION.inc(node=NODE_ID, detected_by="scrubber")
         if SCRUB_THROTTLE:
             await asyncio.sleep(SCRUB_THROTTLE)
 
     await report_corruption(corrupted)
+    SCRUB_PASSES.inc(node=NODE_ID)
+    SCRUB_CHECKED.inc(checked, node=NODE_ID)
     SCRUB_STATUS.update({
         "passes": SCRUB_STATUS["passes"] + 1,
         "last_pass": {
@@ -207,6 +229,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title=f"Storage Node {NODE_ID}", lifespan=lifespan)
+instrument_app(app, "storage-node")
 
 
 # ---------------------------------------------------------------------------
@@ -215,7 +238,27 @@ app = FastAPI(title=f"Storage Node {NODE_ID}", lifespan=lifespan)
 
 @app.get("/health")
 def health():
+    """Liveness: the process is up and serving."""
+    if FAULTS["unhealthy"]:
+        raise HTTPException(status_code=503, detail="unhealthy (fault injection)")
     return {"status": "ok", "node_id": NODE_ID}
+
+
+@app.get("/ready")
+def ready():
+    """Readiness: the data directory is writable (used by Kubernetes)."""
+    probe = STORAGE_DIR / ".ready-probe"
+    try:
+        probe.write_bytes(b"ok")
+        probe.unlink()
+    except OSError as exc:
+        raise HTTPException(status_code=503, detail=f"data dir not writable: {exc}")
+    return {"status": "ready", "node_id": NODE_ID}
+
+
+@app.get("/metrics")
+def metrics():
+    return Response(REGISTRY.render(), media_type="text/plain; version=0.0.4")
 
 
 @app.put("/v1/chunks/{digest}")
@@ -284,6 +327,7 @@ async def get_chunk(
         print(f"[{NODE_ID}] Corrupted chunk detected on read: {digest}",
               flush=True)
         quarantine(path)
+        CORRUPTION.inc(node=NODE_ID, detected_by="read")
         asyncio.create_task(report_corruption([digest]))
         raise HTTPException(status_code=409, detail="Chunk is corrupted")
 
@@ -348,6 +392,17 @@ async def scrub_now(x_cluster_token: str | None = Header(default=None)):
     """Run a full scrub pass immediately and return its result."""
     authorize(x_cluster_token)
     return await scrub_once()
+
+
+@app.post("/v1/debug/unhealthy")
+def make_unhealthy(x_cluster_token: str | None = Header(default=None)):
+    """Demo: /health starts failing, so Kubernetes' liveness probe restarts
+    the container (only if fault injection is enabled)."""
+    authorize(x_cluster_token)
+    if not ALLOW_FAULT_INJECTION:
+        raise HTTPException(status_code=403, detail="Fault injection disabled")
+    FAULTS["unhealthy"] = True
+    return {"node_id": NODE_ID, "unhealthy": True}
 
 
 @app.post("/v1/debug/corrupt/{digest}")

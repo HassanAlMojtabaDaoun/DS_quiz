@@ -1,0 +1,75 @@
+# Storage nodes as a StatefulSet:
+#  * stable identity: pods are storage-node-0, -1, ... and keep their name
+#    (= NODE_ID) and DNS name across restarts;
+#  * one PersistentVolumeClaim per pod (volumeClaimTemplates): a restarted
+#    or rescheduled node gets ITS OWN data back;
+#  * liveness probe restarts a hung node, readiness probe takes a node out
+#    of service while its disk is not writable.
+# Scale out: kubectl -n ds-storage scale statefulset storage-node --replicas=5
+#   -> storage-node-4 announces itself, joins the ring (AUTO_JOIN) and a
+#      rebalance job moves its share of the chunks onto it.
+apiVersion: v1
+kind: Service
+metadata:
+  name: storage-node
+  namespace: ds-storage
+spec:
+  clusterIP: None                 # headless: gives each pod a DNS name
+  selector: { app: storage-node }
+  ports: [{ name: http, port: 8000 }]
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: storage-node
+  namespace: ds-storage
+spec:
+  serviceName: storage-node
+  replicas: 4
+  podManagementPolicy: Parallel
+  selector: { matchLabels: { app: storage-node } }
+  template:
+    metadata:
+      labels: { app: storage-node }
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8000"
+    spec:
+      securityContext: { fsGroup: 10001 }
+      containers:
+        - name: storage-node
+          image: ds-storage/storage-node:1.0
+          imagePullPolicy: IfNotPresent
+          ports: [{ name: http, containerPort: 8000 }]
+          env:
+            - name: POD_NAME
+              valueFrom: { fieldRef: { fieldPath: metadata.name } }
+            - { name: NODE_ID, value: "$(POD_NAME)" }
+            - { name: NODE_URL, value: "http://$(POD_NAME).storage-node:8000" }
+            - { name: STORAGE_DIR, value: /data }
+            - { name: HEARTBEAT_INTERVAL, value: "5" }
+            - { name: SCRUB_INTERVAL, value: "300" }
+            - { name: ALLOW_FAULT_INJECTION, value: "true" }
+            - name: METADATA_URL
+              valueFrom: { configMapKeyRef: { name: ds-config, key: METADATA_URL } }
+            - name: CLUSTER_TOKEN
+              valueFrom: { secretKeyRef: { name: ds-secrets, key: CLUSTER_TOKEN } }
+          livenessProbe:
+            httpGet: { path: /health, port: http }
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            httpGet: { path: /ready, port: http }
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          resources:
+            requests: { cpu: 50m, memory: 96Mi }
+            limits: { memory: 512Mi }
+          volumeMounts:
+            - { name: data, mountPath: /data }
+  volumeClaimTemplates:
+    - metadata: { name: data }
+      spec:
+        accessModes: [ReadWriteOnce]
+        resources: { requests: { storage: 5Gi } }

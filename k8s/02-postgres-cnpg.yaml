@@ -1,0 +1,22 @@
+# Metadata store WITHOUT a single point of failure: a 3-instance PostgreSQL
+# cluster managed by the CloudNativePG operator (install it first, see
+# docs/kubernetes.md). One primary + 2 streaming replicas; if the primary
+# fails, the operator promotes a replica and the service `storage-db-rw`
+# follows the new primary automatically. The operator creates the secret
+# `storage-db-app` with the connection URI used by the coordinator.
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: storage-db
+  namespace: ds-storage
+spec:
+  instances: 3
+  primaryUpdateStrategy: unsupervised
+  storage:
+    size: 2Gi
+  bootstrap:
+    initdb:
+      database: storage
+      owner: storage
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }

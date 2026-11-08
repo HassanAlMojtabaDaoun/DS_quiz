@@ -1,0 +1,69 @@
+# API gateway: stateless, so it scales horizontally. The Service load-
+# balances over the pods; the HorizontalPodAutoscaler adds pods (2..6) when
+# the average CPU use goes above 60 % of the request.
+apiVersion: v1
+kind: Service
+metadata:
+  name: gateway
+  namespace: ds-storage
+spec:
+  type: LoadBalancer
+  selector: { app: gateway }
+  ports: [{ name: http, port: 8080, targetPort: 8080 }]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gateway
+  namespace: ds-storage
+spec:
+  replicas: 2
+  selector: { matchLabels: { app: gateway } }
+  template:
+    metadata:
+      labels: { app: gateway }
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+    spec:
+      containers:
+        - name: gateway
+          image: ds-storage/gateway:1.0
+          imagePullPolicy: IfNotPresent
+          ports: [{ name: http, containerPort: 8080 }]
+          envFrom:
+            - configMapRef: { name: ds-config }
+            - secretRef: { name: ds-secrets }
+          env:
+            - name: GATEWAY_ID
+              valueFrom: { fieldRef: { fieldPath: metadata.name } }
+            - { name: RATE_LIMIT_RPS, value: "50" }
+          livenessProbe:
+            httpGet: { path: /health, port: http }
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          readinessProbe:
+            httpGet: { path: /health, port: http }
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          resources:
+            requests: { cpu: 100m, memory: 96Mi }
+            limits: { cpu: 500m, memory: 512Mi }
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: gateway
+  namespace: ds-storage
+spec:
+  scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: gateway }
+  minReplicas: 2
+  maxReplicas: 6
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target: { type: Utilization, averageUtilization: 60 }
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 60
